@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from app.core.database.database import SessionFactory
+from app.modules.assistant.application.ports import ToolRuntimePort
+from app.modules.assistant.domain.entities import ToolDescriptor
+from app.modules.assistant.tool_gateway.rate_limit import (
+    FixedWindowRateLimiter,
+    RateLimiterPort,
+)
+from app.modules.assistant.tool_gateway.registry import ToolRegistry
+from app.modules.assistant.tool_gateway.wiring import build_tool_gateway
+from app.modules.user.domain.authorization import AuthorizationContext
+
+
+@dataclass(slots=True)
+class GatewayToolRuntime(ToolRuntimePort):
+    registry: ToolRegistry
+    session_factory: SessionFactory
+    allow_write_tools: bool = False
+    rate_limiter: RateLimiterPort | None = None
+
+    def __post_init__(self) -> None:
+        if self.rate_limiter is None:
+            self.rate_limiter = FixedWindowRateLimiter()
+
+    async def list_tools(self) -> list[ToolDescriptor]:
+        return [
+            ToolDescriptor(name=tool.name, description=tool.description)
+            for tool in self.registry.list_tools()
+        ]
+
+    async def invoke(
+        self,
+        tool_name: str,
+        payload: dict[str, object],
+        authorization_context: AuthorizationContext,
+    ) -> dict[str, object]:
+        async with self.session_factory() as session:
+            gateway = build_tool_gateway(
+                registry=self.registry,
+                session=session,
+                allow_write_tools=self.allow_write_tools,
+                rate_limiter=self.rate_limiter,
+            )
+            try:
+                result = await gateway.invoke(
+                    tool_name=tool_name,
+                    payload=payload,
+                    authorization_context=authorization_context,
+                )
+                await session.commit()
+            except Exception:
+                await session.commit()
+                raise
+
+        return result
