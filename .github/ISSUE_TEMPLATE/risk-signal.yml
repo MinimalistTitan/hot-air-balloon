@@ -1,0 +1,58 @@
+name: Risk signal
+description: Record an architecture, reliability, privacy, quality, supply-chain, or maintainability warning.
+title: "[risk]: "
+labels: [risk, needs-triage]
+body:
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Security or privacy (non-sensitive details only)
+        - Architecture erosion
+        - Reliability or operations
+        - Dependency or supply chain
+        - Data integrity or migration
+        - AI, tool, retrieval, or model behavior
+        - Quality or maintainability
+    validations:
+      required: true
+  - type: dropdown
+    id: urgency
+    attributes:
+      label: Urgency
+      options:
+        - P0 - active/credible severe impact
+        - P1 - high likelihood or high impact
+        - P2 - material but containable
+        - P3 - monitor or planned improvement
+    validations:
+      required: true
+  - type: textarea
+    id: signal
+    attributes:
+      label: Signal and evidence
+      description: What changed or was observed? Link redacted logs, metrics, failing checks, or primary sources.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Affected boundary and plausible impact
+      description: Identify assets, users/sites, data, contracts, or operations at risk without publishing exploit details.
+    validations:
+      required: true
+  - type: textarea
+    id: response
+    attributes:
+      label: Proposed containment and durable fix
+      description: Include rollback, automation, owner, and target date if known.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Public-report safety
+      options:
+        - label: This issue contains no secret, personal/customer data, or actionable vulnerability details; sensitive reports use private vulnerability reporting.
+          required: true

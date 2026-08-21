@@ -1,6 +1,10 @@
 .env
 .mypy_cache/
 .pytest_cache/
+AzuriteConfig
+__azurite_db_*.json
+__blobstorage__/
+__queuestorage__/
 .ruff_cache/
 .venv/
 __pycache__/

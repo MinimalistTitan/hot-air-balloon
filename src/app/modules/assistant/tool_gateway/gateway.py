@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Protocol
+from uuid import UUID
 
 from app.modules.assistant.tool_gateway.domain import (
     ToolApprovalDecision,
@@ -47,6 +48,7 @@ class ToolGateway:
         tool_name: str,
         payload: dict[str, Any],
         authorization_context: AuthorizationContext,
+        conversation_id: UUID | None = None,
     ) -> dict[str, Any]:
         tool = self._registry.get(tool_name)
         if tool is None:
@@ -74,6 +76,7 @@ class ToolGateway:
                     actor=actor,
                     payload=validated_payload,
                     decision=ToolApprovalDecision.REJECTED,
+                    conversation_id=conversation_id,
                     reason=f"missing permission: {tool.required_permission.value}",
                 )
             )
@@ -81,6 +84,7 @@ class ToolGateway:
                 ToolTraceEvent(
                     tool_name=tool.name,
                     actor=actor,
+                    conversation_id=conversation_id,
                     event="permission_denied",
                     payload={"required_permission": tool.required_permission.value},
                 )
@@ -100,6 +104,7 @@ class ToolGateway:
                         actor=actor,
                         payload=validated_payload,
                         decision=ToolApprovalDecision.RATE_LIMITED,
+                        conversation_id=conversation_id,
                         reason=(
                             f"rate limit exceeded: {tool.rate_limit.max_calls} calls "
                             f"per {tool.rate_limit.window_seconds}s"
@@ -110,6 +115,7 @@ class ToolGateway:
                     ToolTraceEvent(
                         tool_name=tool.name,
                         actor=actor,
+                        conversation_id=conversation_id,
                         event="rate_limited",
                         payload={"retry_after_seconds": verdict.retry_after_seconds},
                     )
@@ -140,6 +146,7 @@ class ToolGateway:
             actor=actor,
             payload=validated_payload,
             decision=decision,
+            conversation_id=conversation_id,
             reason=reason,
         )
         await self._audit_sink.write(audit_record)
@@ -149,6 +156,7 @@ class ToolGateway:
                 ToolTraceEvent(
                     tool_name=tool.name,
                     actor=actor,
+                    conversation_id=conversation_id,
                     event="approval_blocked",
                     payload={"decision": decision.value},
                 )
@@ -175,6 +183,7 @@ class ToolGateway:
             ToolTraceEvent(
                 tool_name=tool.name,
                 actor=actor,
+                conversation_id=conversation_id,
                 event="handler_executed",
                 payload={"attempts": attempts + 1},
             )

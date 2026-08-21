@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -65,6 +66,7 @@ class ToolAuditRecord:
     actor: str | None
     payload: dict[str, Any]
     decision: ToolApprovalDecision
+    conversation_id: UUID | None = None
     reason: str | None = None
     created_at_utc: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -75,4 +77,5 @@ class ToolTraceEvent:
     actor: str | None
     event: str
     payload: dict[str, Any]
+    conversation_id: UUID | None = None
     created_at_utc: datetime = field(default_factory=lambda: datetime.now(UTC))

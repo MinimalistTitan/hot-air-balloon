@@ -1,5 +1,6 @@
-import app.modules.user.infrastructure.models   # type: ignore[reportUnusedImport]                                   
-import app.modules.documents.infrastructure.models.models # type: ignore[reportUnusedImport]                         
+import app.modules.user.infrastructure.models   # type: ignore[reportUnusedImport]
+import app.modules.documents.infrastructure.models.models # type: ignore[reportUnusedImport]
 import app.modules.operations.infrastructure.manufacturing_maintenance.models.models # type: ignore[reportUnusedImport]
 import app.modules.assistant.infrastructure.conversation_memory.models  # type: ignore[reportUnusedImport]
+import app.modules.assistant.infrastructure.conversation_memory.long_term.models  # type: ignore[reportUnusedImport]
 import app.modules.assistant.infrastructure.tool_gateway.models  # type: ignore[reportUnusedImport]

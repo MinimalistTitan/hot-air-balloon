@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import Settings
@@ -13,7 +14,7 @@ from app.modules.assistant.domain.ports.web_search import (
 )
 from app.modules.assistant.domain.tool_call import ToolCallPolicy
 from app.modules.assistant.domain.value_object import OrchestrationFinishReason
-from app.modules.assistant.wiring import build_assistant_module
+from app.modules.assistant.wiring import build_assistant_module, build_langgraph_agent_orchestrator
 from app.modules.operations.wiring import build_operations_module
 from app.modules.user.contracts.consistency_auditor import TOOL_USERS_CONSISTENCY_AUDITOR_V1
 from app.modules.user.wiring import build_users_module
@@ -43,6 +44,19 @@ class FakeAgentOrchestrator:
             finish_reason=OrchestrationFinishReason.COMPLETED,
             tool_calls=[],
         )
+
+
+async def test_build_langgraph_agent_orchestrator_passes_checkpointer() -> None:
+    settings = Settings(database_url="sqlite+aiosqlite://", chat_api_key="test-key")
+    checkpointer = InMemorySaver()
+
+    orchestrator = build_langgraph_agent_orchestrator(
+        settings=settings,
+        checkpointer=checkpointer,
+    )
+
+    assert orchestrator is not None
+    assert orchestrator.checkpointer is checkpointer
 
 
 async def test_assistant_wiring_composes_all_gateway_tools() -> None:

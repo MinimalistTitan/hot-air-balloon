@@ -1,0 +1,26 @@
+ERP Operations Reference: Production Schedule Note
+
+Document ID: PROD-SCHED-001
+Planning horizon: 2026-08-24 through 2026-08-28
+Site: NORTH-01
+
+Monday
+Line A produces housing assemblies on CNC-07 from 06:00 to 14:00. The planned maintenance window is 14:30 to 16:00. Do not start WO-1042 during production unless the shift supervisor declares an emergency.
+
+Tuesday
+Line B produces pump modules from 07:00 to 15:00. PUMP-12 is available for the planned lubrication inspection after 15:30.
+
+Wednesday
+The quality team performs a first-article review for the housing assembly. Keep one qualified maintenance technician available for urgent response.
+
+Thursday
+The warehouse performs a cycle count for bin B-14. Confirm the available quantity of BRG-6205 after the count and report any variance to the maintenance planner.
+
+Friday
+The operations manager reviews the open work order backlog. Include all Blocked and P2 Urgent orders, their required parts, and their expected production impact.
+
+Coordination rule
+Production scheduling and maintenance planning must agree on any repair that interrupts a running line. Record the agreed maintenance window in the work order before changing the status to Scheduled.
+
+Search terms
+production schedule, NORTH-01, CNC-07, PUMP-12, WO-1042, BRG-6205, maintenance window, production impact

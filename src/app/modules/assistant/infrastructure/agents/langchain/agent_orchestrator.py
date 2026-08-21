@@ -9,9 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from app.modules.assistant.application.ports import (
     AgentOrchestratorPort,
-    ConversationTurn,
     ToolInvoker,
 )
+from app.modules.assistant.domain.context import AssembledContext
 from app.modules.assistant.domain.entities import AgentRunResult, ToolCallRecord, ToolDescriptor
 from app.modules.assistant.domain.tool_call import ToolCallBudgetState, ToolCallPolicy
 from app.modules.assistant.domain.value_object import OrchestrationFinishReason
@@ -51,7 +51,7 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
         user_query: str,
         available_tools: list[ToolDescriptor],
         tool_invoker: ToolInvoker,
-        conversation_history: list[ConversationTurn],
+        context: AssembledContext,
         tool_policy: ToolCallPolicy,
         max_tool_calls: int,
         allow_tool_calls: bool,
@@ -130,7 +130,7 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
         )
 
         history_json = json.dumps(
-            [asdict(turn) for turn in conversation_history],
+            [block.content for block in context.blocks],
             default=str,
         )
 

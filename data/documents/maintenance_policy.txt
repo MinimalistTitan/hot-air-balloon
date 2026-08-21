@@ -1,0 +1,26 @@
+ERP Operations Reference: Maintenance and Work Order Policy
+
+Document ID: OPS-MAINT-001
+Effective date: 2026-08-01
+Owner: Operations Excellence
+
+Purpose
+This policy explains how plant teams create, prioritize, execute, and close maintenance work orders. It applies to production assets, facilities equipment, and safety-critical utility systems.
+
+Work order priority
+P1 - Emergency: an unsafe condition, environmental release, or complete production stoppage. Notify the shift supervisor immediately and begin response within 15 minutes.
+P2 - Urgent: a failed asset that limits production or could cause a secondary failure. Maintenance planning must assign the work order within 4 hours.
+P3 - Planned: a repair that can be scheduled during the next available maintenance window. The target completion is within 14 calendar days.
+P4 - Improvement: a reliability or housekeeping improvement with no immediate production risk. Include it in the weekly backlog review.
+
+Required work order fields
+Every work order must include the asset tag, site code, failure description, priority, safety requirements, requested completion date, and requester. The technician must record the work performed, parts consumed, labor hours, and final status before closure.
+
+Status workflow
+New work orders are reviewed by the maintenance planner. Approved work orders move to Scheduled, then In Progress when work begins. A work order moves to Blocked when a part, permit, or specialist is unavailable. Completed work requires supervisor review before it moves to Closed. Cancelled work orders require a reason.
+
+Example reference
+Work order WO-1042 concerns excessive vibration on compressor asset COMP-03 at site NORTH-01. It is a P2 Urgent order. The planner should verify bearing availability, confirm the lockout/tagout permit, and schedule the repair during the next safe production window.
+
+Search terms
+maintenance policy, work order priority, P1 emergency, P2 urgent, planned repair, blocked work order, supervisor review, WO-1042, COMP-03, NORTH-01

@@ -6,10 +6,7 @@ from app.modules.assistant.tool_gateway.domain import ToolDefinition
 from app.modules.user.application.ports import UserUnitOfWorkFactory
 from app.modules.user.application.use_cases import GetUser, RegisterUser, RunUserConsistencyAudit
 from app.modules.user.infrastructure.unit_of_work import UserUnitOfWork
-from app.modules.user.presentation.user_auditor_tools import (
-    build_users_consistency_auditor_tool,
-)
-
+from app.modules.user.infrastructure.tools import build_users_consistency_auditor_tool
 
 @dataclass(frozen=True, slots=True)
 class UsersModule:

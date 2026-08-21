@@ -31,3 +31,14 @@ class AssistantQueryResponseV1(BaseModel):
     finish_reason: str
     tool_calls: list[AssistantToolCallTraceV1] = []
     generated_at_utc: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AssistantMemoryEraseResponseV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: UUID
+    deleted_memory_records: int
+    deleted_vectors: int
+    deleted_turns: int
+    deleted_conversations: int
+    processed_at_utc: datetime = Field(default_factory=lambda: datetime.now(UTC))

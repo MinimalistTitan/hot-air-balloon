@@ -17,6 +17,7 @@ class ToolTraceRepository:
             AssistantToolTraceEvent(
                 tool_name=event.tool_name,
                 actor=event.actor,
+                conversation_id=event.conversation_id,
                 event=event.event,
                 payload_json=event.payload,
                 created_at_utc=event.created_at_utc,

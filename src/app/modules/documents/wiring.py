@@ -3,12 +3,21 @@ from dataclasses import dataclass
 from app.core.config import Settings
 from app.core.database.database import SessionFactory
 from app.core.life_cycle import ManagedResource
+from app.modules.assistant.infrastructure.conversation_memory.long_term.memory_record_repository import (
+    MemoryRecordRepository,
+)
 from app.modules.documents.application.ports import (
     BlobStoragePort,
     DocumentsUnitOfWorkFactory,
 )
 from app.modules.documents.application.use_cases import UploadDocument
 from app.modules.documents.infrastructure.blob_storage import AzureBlobStorage
+from app.modules.documents.infrastructure.ingestion.blob_downloader import BlobDownloaderPort
+from app.modules.documents.infrastructure.ingestion.chunker import TokenChunker
+from app.modules.documents.infrastructure.ingestion.document_ingestion_consumer import (
+    DocumentIngestionConsumer,
+)
+from app.modules.documents.infrastructure.ingestion.text_extractor import TextExtractor
 from app.modules.documents.infrastructure.outbox_publisher import (
     OutboxPublisher,
 )
@@ -87,6 +96,30 @@ def build_documents_module(
             max_retries=settings.outbox_max_retries,
         )
         resources.append(outbox_publisher)
+
+    if settings.document_ingestion_enabled:
+        if not isinstance(effective_blob_storage, BlobDownloaderPort):
+            raise RuntimeError("document_ingestion_enabled requires blob download support")
+        resources.append(
+            DocumentIngestionConsumer(
+                session_factory=session_factory,
+                blob_downloader=effective_blob_storage,
+                memory_store=MemoryRecordRepository(
+                    session_factory=session_factory,
+                    embedding_model=settings.embedding_model,
+                    user_memory_namespace=settings.pinecone_user_memory_namespace,
+                    documents_namespace=settings.pinecone_documents_namespace,
+                ),
+                text_extractor=TextExtractor(),
+                chunker=TokenChunker(
+                    chunk_tokens=settings.document_chunk_tokens,
+                    overlap_tokens=settings.document_chunk_overlap_tokens,
+                ),
+                batch_size=settings.document_ingestion_batch_size,
+                poll_interval_seconds=settings.document_ingestion_poll_interval_seconds,
+                topic_name=settings.kafka_documents_topic,
+            )
+        )
 
     return DocumentsModule(
         unit_of_work_factory=unit_of_work_factory,

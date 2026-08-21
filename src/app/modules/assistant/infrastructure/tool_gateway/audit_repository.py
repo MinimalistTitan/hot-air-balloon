@@ -17,6 +17,7 @@ class ToolAuditRepository:
         row = AssistantToolAuditRecord(
             tool_name=record.tool_name,
             actor=record.actor,
+            conversation_id=record.conversation_id,
             payload_json=record.payload,
             decision=record.decision.value,
             reason=record.reason,

@@ -1,0 +1,226 @@
+{
+  "version": 1,
+  "minimum_score": 85,
+  "description": "Repository-evidence score. Critical metrics fail independently; the aggregate prevents gradual control erosion.",
+  "metrics": [
+    {
+      "id": "ARCH-01",
+      "category": "Architecture",
+      "weight": 8,
+      "description": "Executable layer and cross-module boundaries pass without new debt.",
+      "evaluator": "architecture_guard",
+      "critical": true,
+      "reference": "https://csrc.nist.gov/pubs/sp/800/218/final"
+    },
+    {
+      "id": "ARCH-05",
+      "category": "Architecture",
+      "weight": 4,
+      "description": "The architecture debt baseline is empty.",
+      "evaluator": "architecture_debt_zero",
+      "reference": "https://github.com/ossf/scorecard/blob/main/docs/checks.md"
+    },
+    {
+      "id": "ARCH-02",
+      "category": "Architecture",
+      "weight": 5,
+      "description": "Architecture policy is configurable and versioned.",
+      "evaluator": "paths_exist",
+      "paths": [".github/governance/architecture-policy.json", ".github/instructions/architecture.instructions.md"],
+      "reference": "https://github.com/ossf/scorecard/blob/main/docs/checks.md"
+    },
+    {
+      "id": "ARCH-03",
+      "category": "Architecture",
+      "weight": 4,
+      "description": "Schema migrations are validated in CI.",
+      "evaluator": "file_contains",
+      "path": ".github/workflows/ci.yml",
+      "patterns": ["alembic upgrade head"],
+      "reference": "https://alembic.sqlalchemy.org/en/latest/tutorial.html"
+    },
+    {
+      "id": "ARCH-04",
+      "category": "Architecture",
+      "weight": 4,
+      "description": "Pull requests explicitly assess architecture and rollback impact.",
+      "evaluator": "file_contains",
+      "path": ".github/PULL_REQUEST_TEMPLATE.md",
+      "patterns": ["Architecture impact", "Rollback"],
+      "reference": "https://csrc.nist.gov/pubs/sp/800/218/final"
+    },
+    {
+      "id": "QUAL-01",
+      "category": "Quality",
+      "weight": 8,
+      "description": "Formatting, lint, strict typing, tests, dependency audit, migrations, and governance run in CI.",
+      "evaluator": "file_contains",
+      "path": ".github/workflows/ci.yml",
+      "patterns": ["ruff format --check", "ruff check", "mypy src tests", "pytest", "pip-audit", "architecture_guard.py", "governance_score.py"],
+      "critical": true,
+      "reference": "https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python"
+    },
+    {
+      "id": "QUAL-02",
+      "category": "Quality",
+      "weight": 4,
+      "description": "Strict typing is enabled.",
+      "evaluator": "file_contains",
+      "path": "pyproject.toml",
+      "patterns": ["strict = true"],
+      "reference": "https://mypy.readthedocs.io/en/stable/config_file.html"
+    },
+    {
+      "id": "QUAL-03",
+      "category": "Quality",
+      "weight": 4,
+      "description": "Branch coverage has an enforced floor of at least 80 percent.",
+      "evaluator": "coverage_floor",
+      "path": "pyproject.toml",
+      "minimum": 80,
+      "reference": "https://coverage.readthedocs.io/en/latest/branch.html"
+    },
+    {
+      "id": "QUAL-04",
+      "category": "Quality",
+      "weight": 4,
+      "description": "Repository-specific test instructions cover negative and adversarial paths.",
+      "evaluator": "paths_exist",
+      "paths": [".github/instructions/tests.instructions.md", ".github/instructions/assistant-ai.instructions.md"],
+      "reference": "https://csrc.nist.gov/pubs/sp/800/218/final"
+    },
+    {
+      "id": "SEC-01",
+      "category": "Security and privacy",
+      "weight": 5,
+      "description": "All external GitHub Actions are pinned to full commit SHAs.",
+      "evaluator": "workflows_pinned",
+      "critical": true,
+      "reference": "https://docs.github.com/en/code-security/tutorials/secure-your-organization/protect-against-threats"
+    },
+    {
+      "id": "SEC-02",
+      "category": "Security and privacy",
+      "weight": 4,
+      "description": "Every workflow declares explicit permissions.",
+      "evaluator": "workflow_permissions",
+      "critical": true,
+      "reference": "https://docs.github.com/en/actions/reference/security/secure-use"
+    },
+    {
+      "id": "SEC-03",
+      "category": "Security and privacy",
+      "weight": 4,
+      "description": "Python, container, and Actions dependencies receive automated updates and auditing.",
+      "evaluator": "file_contains",
+      "path": ".github/dependabot.yml",
+      "patterns": ["package-ecosystem: uv", "package-ecosystem: docker", "package-ecosystem: github-actions"],
+      "reference": "https://docs.github.com/en/code-security/dependabot"
+    },
+    {
+      "id": "SEC-04",
+      "category": "Security and privacy",
+      "weight": 3,
+      "description": "A private vulnerability reporting policy is present.",
+      "evaluator": "paths_exist",
+      "paths": [".github/SECURITY.md"],
+      "reference": "https://docs.github.com/en/code-security/security-advisories/working-with-repository-security-advisories/configuring-private-vulnerability-reporting-for-a-repository"
+    },
+    {
+      "id": "SEC-05",
+      "category": "Security and privacy",
+      "weight": 6,
+      "description": "LLM, tool, RAG, memory, privacy, and abuse-case guidance is repository-specific.",
+      "evaluator": "paths_exist",
+      "paths": [".github/skills/security-privacy-review/SKILL.md", ".github/instructions/assistant-ai.instructions.md"],
+      "critical": true,
+      "reference": "https://genai.owasp.org/llm-top-10/"
+    },
+    {
+      "id": "SEC-06",
+      "category": "Security and privacy",
+      "weight": 4,
+      "description": "CodeQL and dependency review are prepared behind an explicit capability flag.",
+      "evaluator": "paths_exist",
+      "paths": [".github/workflows/advanced-security.yml", ".github/codeql-config.yml"],
+      "reference": "https://docs.github.com/en/code-security/concepts/supply-chain-security/dependency-review"
+    },
+    {
+      "id": "SEC-07",
+      "category": "Security and privacy",
+      "weight": 4,
+      "description": "Risk signals have a structured intake path.",
+      "evaluator": "paths_exist",
+      "paths": [".github/ISSUE_TEMPLATE/risk-signal.yml"],
+      "reference": "https://csrc.nist.gov/pubs/sp/800/218/final"
+    },
+    {
+      "id": "AUTO-01",
+      "category": "Automation and freshness",
+      "weight": 5,
+      "description": "CI covers the actual default branch and runs a weekly early-warning scan.",
+      "evaluator": "file_contains",
+      "path": ".github/workflows/ci.yml",
+      "patterns": ["main_library", "schedule:", "cron:"],
+      "critical": true,
+      "reference": "https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows"
+    },
+    {
+      "id": "AUTO-02",
+      "category": "Automation and freshness",
+      "weight": 4,
+      "description": "The governance score is policy-driven and enforced by CI.",
+      "evaluator": "paths_exist",
+      "paths": [".github/governance/scorecard-policy.json", ".github/scripts/governance_score.py"],
+      "reference": "https://github.com/ossf/scorecard/blob/main/docs/checks.md"
+    },
+    {
+      "id": "AUTO-03",
+      "category": "Automation and freshness",
+      "weight": 6,
+      "description": "Primary-source technology intelligence has not expired.",
+      "evaluator": "technology_freshness",
+      "path": ".github/governance/technology-watch.json",
+      "critical": true,
+      "reference": "https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/add-skills"
+    },
+    {
+      "id": "MAINT-01",
+      "category": "Maintainability",
+      "weight": 3,
+      "description": "Repository-wide Copilot operating instructions are present.",
+      "evaluator": "paths_exist",
+      "paths": [".github/copilot-instructions.md"],
+      "reference": "https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions"
+    },
+    {
+      "id": "MAINT-02",
+      "category": "Maintainability",
+      "weight": 3,
+      "description": "At least six path-specific instruction sets exist.",
+      "evaluator": "glob_count",
+      "pattern": ".github/instructions/*.instructions.md",
+      "minimum": 6,
+      "reference": "https://docs.github.com/en/copilot/reference/custom-instructions-support"
+    },
+    {
+      "id": "MAINT-03",
+      "category": "Maintainability",
+      "weight": 3,
+      "description": "At least four task-specific Copilot skills exist.",
+      "evaluator": "glob_count",
+      "pattern": ".github/skills/*/SKILL.md",
+      "minimum": 4,
+      "reference": "https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/add-skills"
+    },
+    {
+      "id": "MAINT-04",
+      "category": "Maintainability",
+      "weight": 1,
+      "description": "Pull requests use a risk- and evidence-oriented template.",
+      "evaluator": "paths_exist",
+      "paths": [".github/PULL_REQUEST_TEMPLATE.md"],
+      "reference": "https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests"
+    }
+  ]
+}

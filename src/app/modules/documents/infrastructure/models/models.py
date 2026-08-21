@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, Integer, String, Text, Uuid, func
+from sqlalchemy import DateTime, Integer, JSON, String, Text, Uuid, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +21,7 @@ class DocumentRecord(Base):
     blob_url: Mapped[str] = mapped_column(Text, nullable=False)
     blob_etag: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    ingestion_error: Mapped[str | None] = mapped_column(Text(), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -33,11 +34,18 @@ class OutboxRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     topic: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     key: Mapped[str] = mapped_column(String(255), nullable=False)
-    payload_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    headers_json: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False)
+    payload_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=False,
+    )
+    headers_json: Mapped[dict[str, str]] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=False,
+    )
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )

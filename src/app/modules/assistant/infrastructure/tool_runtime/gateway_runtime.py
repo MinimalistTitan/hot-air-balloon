@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from app.core.database.database import SessionFactory
 from app.modules.assistant.application.ports import ToolRuntimePort
@@ -36,6 +37,7 @@ class GatewayToolRuntime(ToolRuntimePort):
         tool_name: str,
         payload: dict[str, object],
         authorization_context: AuthorizationContext,
+        conversation_id: UUID | None = None,
     ) -> dict[str, object]:
         async with self.session_factory() as session:
             gateway = build_tool_gateway(
@@ -49,6 +51,7 @@ class GatewayToolRuntime(ToolRuntimePort):
                     tool_name=tool_name,
                     payload=payload,
                     authorization_context=authorization_context,
+                    conversation_id=conversation_id,
                 )
                 await session.commit()
             except Exception:

@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "description": "Executable dependency policy for the modular monolith. New violations fail CI; known debt is a ratchet baseline.",
+  "layer_dependencies": {
+    "domain": ["domain"],
+    "contracts": ["contracts", "domain"],
+    "application": ["application", "contracts", "domain"],
+    "infrastructure": ["infrastructure", "application", "contracts", "domain", "tool_gateway"],
+    "presentation": ["presentation", "application", "contracts", "domain", "wiring"],
+    "tool_gateway": ["tool_gateway", "domain"]
+  },
+  "unrestricted_source_layers": ["wiring"],
+  "allowed_cross_module_imports": {
+    "assistant": [
+      "app.modules.user.contracts.consistency_auditor",
+      "app.modules.user.domain.authorization"
+    ],
+    "documents": [
+      "app.modules.assistant.application.ports"
+    ],
+    "operations": [
+      "app.modules.assistant.tool_gateway.domain",
+      "app.modules.user.application.authorization_policy",
+      "app.modules.user.domain.authorization"
+    ],
+    "user": [
+      "app.modules.assistant.tool_gateway.domain"
+    ]
+  },
+  "module_free_roots": [
+    "src/app/core",
+    "src/app/shared"
+  ],
+  "allowed_violations": [
+    {
+      "key": "src/app/modules/documents/wiring.py|app.modules.assistant.infrastructure.conversation_memory.long_term.memory_record_repository|cross-module-boundary",
+      "reason": "Existing documents wiring reaches into assistant persistence infrastructure.",
+      "removal_condition": "Inject a documents-owned/application memory-write port from app/container.py instead of constructing the assistant repository in documents wiring."
+    },
+    {
+      "key": "src/app/modules/operations/application/operation_services.py|app.modules.operations.infrastructure.repositories.operations|layer-direction",
+      "reason": "Existing application-to-repository coupling; replace with an application port.",
+      "removal_condition": "OperationsService depends on a protocol implemented by OperationsRepository."
+    },
+    {
+      "key": "src/app/modules/user/application/authorization_policy.py|app.modules.user.infrastructure.repository|layer-direction",
+      "reason": "Existing application-to-repository coupling; replace with a user authorization repository port.",
+      "removal_condition": "AuthorizationPolicy depends on an application/domain protocol."
+    },
+    {
+      "key": "src/app/modules/user/infrastructure/tools/consistency_auditor_tool.py|app.modules.user.presentation.consistency_audit_presenter|layer-direction",
+      "reason": "Existing infrastructure-to-presentation formatter dependency.",
+      "removal_condition": "Move shared output mapping to application/contracts and reuse it from both adapters."
+    }
+  ]
+}

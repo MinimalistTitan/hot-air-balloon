@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "last_verified": "2026-08-21",
+  "max_age_days": 45,
+  "policy": "Verify only against primary maintainer or standards-body sources. Update status, version, date, and notes together.",
+  "sources": [
+    {
+      "id": "github-copilot-customization",
+      "status": "Repository instructions, path instructions, custom agents, and project skills are supported; project skills live under .github/skills/<name>/SKILL.md.",
+      "url": "https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/add-skills"
+    },
+    {
+      "id": "github-actions-security",
+      "status": "Use explicit least privilege and pin third-party actions to full commit SHAs.",
+      "url": "https://docs.github.com/en/code-security/tutorials/secure-your-organization/protect-against-threats"
+    },
+    {
+      "id": "dependency-review-action",
+      "status": "v5.0.0 is current; it uses Node 24 and needs Actions Runner 2.327.1 or newer.",
+      "version": "5.0.0",
+      "sha": "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+      "url": "https://github.com/actions/dependency-review-action/releases/tag/v5.0.0"
+    },
+    {
+      "id": "codeql-action",
+      "status": "v4.37.7 is the verified current release for the prepared advanced-security workflow.",
+      "version": "4.37.7",
+      "sha": "ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd",
+      "url": "https://github.com/github/codeql-action/releases/tag/v4.37.7"
+    },
+    {
+      "id": "nist-ssdf",
+      "status": "SP 800-218 v1.1 remains final; SP 800-218 Rev.1 / SSDF v1.2 is a draft and is monitored, not treated as normative.",
+      "url": "https://csrc.nist.gov/projects/ssdf/publications"
+    },
+    {
+      "id": "owasp-genai",
+      "status": "Use the 2025 LLM/GenAI Top 10 and monitor the 2026 incident round-ups for observed exploit patterns.",
+      "url": "https://genai.owasp.org/llm-top-10/"
+    },
+    {
+      "id": "github-copilot-changelog",
+      "status": "Monitor official Copilot changes before changing repository customization syntax or agent behavior.",
+      "url": "https://github.blog/changelog/label/copilot/"
+    }
+  ]
+}
+

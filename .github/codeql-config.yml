@@ -1,0 +1,11 @@
+name: Hot Air Balloon CodeQL configuration
+
+queries:
+  - uses: security-extended
+
+paths:
+  - src
+
+paths-ignore:
+  - tests
+

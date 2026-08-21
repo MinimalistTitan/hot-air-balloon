@@ -6,13 +6,21 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from app.core.config import Settings
 from app.core.database.database import SessionFactory
+from app.modules.assistant.application.context.assembler import DefaultContextAssembler
+from app.modules.assistant.application.context.budget import TokenBudgetAllocator
+from app.modules.assistant.application.context.providers import ContextProviderPort
+from app.modules.assistant.application.context.recent_turns_provider import RecentTurnsProvider
+from app.modules.assistant.application.context.user_memory_provider import UserMemoryProvider
 from app.modules.assistant.application.ports import (
     AgentOrchestratorPort,
     AssistantTelemetryPort,
+    ContextAssemblerPort,
     ConversationStorePort,
     ToolRuntimePort,
+    UserMemoryErasePort,
 )
 from app.modules.assistant.application.use_cases import (
+    EraseUserMemory,
     OrchestrateAssistantQuery,
 )
 from app.modules.assistant.domain.ports.web_search import WebSearchPort
@@ -23,8 +31,24 @@ from app.modules.assistant.infrastructure.agents.langgraph.agent_brain import (
 from app.modules.assistant.infrastructure.agents.langgraph.orchestrator import (
     LangGraphAgentOrchestrator,
 )
-from app.modules.assistant.infrastructure.conversation_memory.inmemory_conversation_store import (
+from app.modules.assistant.infrastructure.agents.langgraph.postgres_checkpointer import (
+    PostgresCheckpointer,
+)
+from app.modules.assistant.infrastructure.context.tiktoken_counter import TiktokenCounter
+from app.modules.assistant.infrastructure.conversation_memory.in_memory.inmemory_conversation_store import (
     InMemoryConversationStore,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.memory_record_repository import (
+    MemoryRecordRepository,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.pinecone_index import (
+    PineconeVectorIndex,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.user_memory_eraser import (
+    UserMemoryEraser,
+)
+from app.modules.assistant.infrastructure.conversation_memory.short_term.postgres_conversation_store import (
+    ConversationStore,
 )
 from app.modules.assistant.infrastructure.llm.langchain_llm_client import (
     LangChainChatModelFactory,
@@ -41,21 +65,28 @@ from app.modules.assistant.tool_gateway.registry import ToolRegistry
 @dataclass(frozen=True, slots=True)
 class AssistantModule:
     query: OrchestrateAssistantQuery
+    erase_user_memory: EraseUserMemory | None = None
 
 
 def build_langgraph_agent_orchestrator(
     settings: Settings,
     *,
-    checkpointer: BaseCheckpointSaver[Any] | None = None,
+    checkpointer: BaseCheckpointSaver[Any] | PostgresCheckpointer | None = None,
 ) -> LangGraphAgentOrchestrator | None:
     if settings.chat_api_key is None:
         return None
+
+    effective_checkpointer: BaseCheckpointSaver[Any] | None
+    if isinstance(checkpointer, PostgresCheckpointer):
+        effective_checkpointer = checkpointer.saver
+    else:
+        effective_checkpointer = checkpointer
 
     llm = LangChainChatModelFactory(settings).build()
     return LangGraphAgentOrchestrator(
         brain=AgentBrain(llm=llm),
         model_name=llm.model_name,
-        checkpointer=checkpointer,
+        checkpointer=effective_checkpointer,
     )
 
 
@@ -70,6 +101,9 @@ def build_assistant_module(
     conversation_store: ConversationStorePort | None = None,
     telemetry: AssistantTelemetryPort | None = None,
     tool_policy: ToolCallPolicy | None = None,
+    context_assembler: ContextAssemblerPort | None = None,
+    user_memory_eraser: UserMemoryErasePort | None = None,
+    checkpointer: BaseCheckpointSaver[Any] | PostgresCheckpointer | None = None,
 ) -> AssistantModule | None:
     registered_tools = list(tools)
     if web_search_provider is not None:
@@ -78,9 +112,12 @@ def build_assistant_module(
     registered_tools_tuple = tuple(registered_tools)
 
     effective_orchestrator = agent_orchestrator
-    
+
     if effective_orchestrator is None:
-        effective_orchestrator = build_langgraph_agent_orchestrator(settings=settings)
+        effective_orchestrator = build_langgraph_agent_orchestrator(
+            settings=settings,
+            checkpointer=checkpointer,
+        )
 
     if effective_orchestrator is None:
         return None
@@ -114,8 +151,13 @@ def build_assistant_module(
     effective_conversation_store = (
         conversation_store
         if conversation_store is not None
-        else InMemoryConversationStore(
-            max_turns_per_conversation=12
+        else (
+            ConversationStore(
+                session_factory=session_factory,
+                retention_days=settings.short_term_retention_days,
+            )
+            if session_factory is not None
+            else InMemoryConversationStore(max_turns_per_conversation=12)
         )
     )
 
@@ -125,6 +167,45 @@ def build_assistant_module(
         else StructlogAssistantTelemetry()
     )
 
+    effective_context_assembler = context_assembler
+    if effective_context_assembler is None:
+        counter = TiktokenCounter()
+        providers: list[ContextProviderPort] = [RecentTurnsProvider(counter=counter)]
+        if settings.long_term_memory_enabled and session_factory is not None:
+            providers.append(
+                UserMemoryProvider(
+                    memory_reader=MemoryRecordRepository(
+                        session_factory=session_factory,
+                        embedding_model=settings.embedding_model,
+                        user_memory_namespace=settings.pinecone_user_memory_namespace,
+                        documents_namespace=settings.pinecone_documents_namespace,
+                    ),
+                    counter=counter,
+                    limit=settings.long_term_recall_top_k,
+                )
+            )
+        effective_context_assembler = DefaultContextAssembler(
+            providers=tuple(providers),
+            allocator=TokenBudgetAllocator(),
+            token_counter=counter,
+            total_budget=settings.context_budget_tokens,
+        )
+
+    effective_user_memory_eraser = user_memory_eraser
+    if (
+        effective_user_memory_eraser is None
+        and settings.long_term_memory_enabled
+        and session_factory is not None
+        and settings.pinecone_api_key is not None
+    ):
+        effective_user_memory_eraser = UserMemoryEraser(
+            session_factory=session_factory,
+            vector_index=PineconeVectorIndex(
+                api_key=settings.pinecone_api_key.get_secret_value(),
+                index_name=settings.pinecone_index_name,
+            ),
+        )
+
     return AssistantModule(
         query=OrchestrateAssistantQuery(
             tool_runtime=effective_tool_runtime,
@@ -132,5 +213,11 @@ def build_assistant_module(
             conversation_store=effective_conversation_store,
             telemetry=effective_telemetry,
             tool_policy=effective_policy,
-        )
+            context_assembler=effective_context_assembler,
+        ),
+        erase_user_memory=(
+            EraseUserMemory(effective_user_memory_eraser)
+            if effective_user_memory_eraser is not None
+            else None
+        ),
     )

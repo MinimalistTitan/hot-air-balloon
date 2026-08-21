@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/MinimalistTitan/hot-air-balloon/security/advisories/new
+    about: Never disclose credentials, private data, or exploitable security details in a public issue.
+

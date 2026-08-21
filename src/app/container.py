@@ -1,8 +1,9 @@
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Self, cast
+from typing import Any, Self, cast
 
 from fastapi import Request
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.config import Settings
@@ -16,6 +17,37 @@ from app.modules.assistant.application.ports import (
 )
 from app.modules.assistant.domain.ports.web_search import WebSearchPort
 from app.modules.assistant.domain.tool_call import ToolCallPolicy
+from app.modules.assistant.infrastructure.agents.langgraph.postgres_checkpointer import (
+    PostgresCheckpointer,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.consolidation_worker import (
+    ConsolidationWorker,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.llm_summarizer import (
+    LlmSummarizer,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.memory_record_repository import (
+    MemoryRecordRepository,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.memory_retention_job import (
+    MemoryRetentionJob,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.openai_embedding_client import (
+    OpenAIEmbeddingClient,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.pinecone_index import (
+    PineconeVectorIndex,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.reconciliation_job import (
+    ReconciliationJob,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.vector_sync_worker import (
+    VectorSyncWorker,
+)
+from app.modules.assistant.infrastructure.conversation_memory.short_term.short_term_retention_job import (
+    ShortTermRetentionJob,
+)
+from app.modules.assistant.infrastructure.llm.langchain_llm_client import LangChainChatModelFactory
 from app.modules.assistant.wiring import AssistantModule, build_assistant_module
 from app.modules.documents.application.ports import BlobStoragePort
 from app.modules.documents.wiring import DocumentsModule, build_documents_module
@@ -69,6 +101,7 @@ class Container:
         assistant_conversation_store: ConversationStorePort | None = None,
         assistant_telemetry: AssistantTelemetryPort | None = None,
         assistant_tool_policy: ToolCallPolicy | None = None,
+        assistant_checkpointer: BaseCheckpointSaver[Any] | PostgresCheckpointer | None = None,
         managed_resources: Iterable[ManagedResource] = (),
     ) -> Self:
         database_engine = engine if engine is not None else create_engine(settings)
@@ -91,9 +124,11 @@ class Container:
             session_factory=session_factory,
         )
 
+        assistant_tools = (*users.tools, *operations.tools, *operations.write_tools)
+
         assistant = build_assistant_module(
             settings=settings,
-            tools=(*users.tools, *operations.tools, *operations.write_tools),
+            tools=assistant_tools,
             session_factory=session_factory,
             web_search_provider=web_search_provider,
             tool_runtime=assistant_tool_runtime,
@@ -101,9 +136,79 @@ class Container:
             conversation_store=assistant_conversation_store,
             telemetry=assistant_telemetry,
             tool_policy=assistant_tool_policy,
+            checkpointer=assistant_checkpointer,
         )
 
         resources = list(managed_resources)
+        if isinstance(assistant_checkpointer, ManagedResource):
+            resources.append(assistant_checkpointer)
+        resources.append(
+            ShortTermRetentionJob(
+                session_factory=session_factory,
+                retention_days=settings.short_term_retention_days,
+                assistant_conversation_retention_days=settings.assistant_conversation_retention_days,
+            )
+        )
+        if settings.long_term_memory_enabled:
+            pinecone_api_key = settings.pinecone_api_key
+            embedding_api_key = settings.embedding_api_key
+            if pinecone_api_key is None or embedding_api_key is None:
+                raise RuntimeError("Long-term memory credentials were not validated")
+            vector_index = PineconeVectorIndex(
+                api_key=pinecone_api_key.get_secret_value(),
+                index_name=settings.pinecone_index_name,
+            )
+            resources.append(
+                VectorSyncWorker(
+                    session_factory=session_factory,
+                    embedding_client=OpenAIEmbeddingClient(
+                        api_key=embedding_api_key.get_secret_value(),
+                        model=settings.embedding_model,
+                        base_url=settings.chat_base_url,
+                    ),
+                    vector_index=vector_index,
+                    batch_size=settings.vector_sync_batch_size,
+                    poll_interval_seconds=settings.vector_sync_poll_interval_seconds,
+                )
+            )
+            resources.append(
+                ReconciliationJob(
+                    session_factory=session_factory,
+                    vector_index=vector_index,
+                    namespaces=(
+                        settings.pinecone_user_memory_namespace,
+                        settings.pinecone_documents_namespace,
+                    ),
+                    interval_seconds=settings.vector_reconciliation_interval_seconds,
+                )
+            )
+            resources.append(
+                MemoryRetentionJob(
+                    session_factory=session_factory,
+                    vector_index=vector_index,
+                    batch_size=settings.memory_retention_batch_size,
+                    poll_interval_seconds=settings.memory_retention_poll_interval_seconds,
+                )
+            )
+            if settings.consolidation_enabled and settings.chat_api_key is not None:
+                resources.append(
+                    ConsolidationWorker(
+                        session_factory=session_factory,
+                        summarizer=LlmSummarizer(llm=LangChainChatModelFactory(settings).build()),
+                        memory_store=MemoryRecordRepository(
+                            session_factory=session_factory,
+                            embedding_model=settings.embedding_model,
+                            user_memory_namespace=settings.pinecone_user_memory_namespace,
+                            documents_namespace=settings.pinecone_documents_namespace,
+                        ),
+                        tool_permissions_by_name={
+                            tool.name: tool.required_permission.value
+                            for tool in assistant_tools
+                        },
+                        idle_minutes=settings.consolidation_idle_minutes,
+                        summary_retention_days=settings.summary_retention_days,
+                    )
+                )
         if documents is not None:
             resources.extend(documents.resources)
 

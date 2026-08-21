@@ -1,3 +1,4 @@
+from typing import Any, cast
 from uuid import uuid4
 
 from app.modules.assistant.domain.entities import ToolDescriptor
@@ -44,7 +45,7 @@ async def test_orchestrator_runs_tool_loop_and_returns_trace() -> None:
         user_query="What is the status of A-1?",
         available_tools=[ToolDescriptor(name="asset_status", description="Read asset status")],
         tool_invoker=invoke_tool,
-        conversation_history=[],
+        context=cast(Any, type("Ctx", (), {"render": lambda self: ""})()),
         tool_policy=ToolCallPolicy(
             allowed_tool_names=frozenset({"asset_status"}),
             max_total_calls=1,

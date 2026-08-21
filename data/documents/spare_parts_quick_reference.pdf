@@ -1,0 +1,84 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 1333 >>
+stream
+BT
+/F1 10 Tf
+50 760 Td
+(ERP Operations Reference: Spare Parts Quick Reference) Tj
+0 -16 Td
+(Document ID: INV-SPARES-001) Tj
+0 -16 Td
+(Updated: 2026-08-15) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(Part BRG-6205) Tj
+0 -16 Td
+(Description: Sealed drive-end bearing for compressor and pump assemblies.) Tj
+0 -16 Td
+(Compatible assets: COMP-03, PUMP-12.) Tj
+0 -16 Td
+(Bin location: NORTH-01 / B-14.) Tj
+0 -16 Td
+(Minimum stock: 4 units. Reorder point: 6 units.) Tj
+0 -16 Td
+(Current available quantity: 8 units.) Tj
+0 -16 Td
+(Standard lead time: 5 business days.) Tj
+0 -16 Td
+(Issue one bearing to WO-1042 only after the technician confirms the bearing diagnosis.) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(Part FLT-110) Tj
+0 -16 Td
+(Description: Hydraulic return-line filter.) Tj
+0 -16 Td
+(Compatible assets: PRESS-02 and PRESS-04.) Tj
+0 -16 Td
+(Bin location: SOUTH-02 / A-07.) Tj
+0 -16 Td
+(Minimum stock: 3 units. Reorder point: 5 units.) Tj
+0 -16 Td
+(Current available quantity: 2 units.) Tj
+0 -16 Td
+(Standard lead time: 10 business days.) Tj
+0 -16 Td
+(Create a purchase request before scheduling a planned replacement.) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(Inventory terms) Tj
+0 -16 Td
+(Available quantity excludes reserved stock. Reorder point is the quantity that triggers replenishment.) Tj
+0 -16 Td
+(A blocked work order must state which part is unavailable.) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1696
+%%EOF

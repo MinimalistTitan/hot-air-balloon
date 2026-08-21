@@ -2,7 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-
+from app.modules.user.presentation.consistency_audit_presenter import to_user_consistency_auditor_output
 from app.container import get_container
 from app.modules.user.application.use_cases import (
     GetUser,
@@ -15,9 +15,6 @@ from app.modules.user.contracts.consistency_auditor import (
     UserConsistencyAuditorOutputV1,
 )
 from app.modules.user.presentation.schemas import RegisterUserRequest, UserResponse
-from app.modules.user.presentation.user_auditor_tools import (
-    to_user_consistency_auditor_output,
-)
 from app.modules.user.wiring import UsersModule
 
 router = APIRouter(prefix="/users", tags=["users"])

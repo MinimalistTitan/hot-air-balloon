@@ -1,3 +1,4 @@
+from contextlib import suppress
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -12,7 +13,7 @@ class AzureBlobStorage:
     def __init__(self, *, connection_string: str, container_name: str) -> None:
         self._client = BlobServiceClient.from_connection_string(connection_string)
         self._container_name = container_name
-        
+
     async def start(self) -> None:
         # The Azure client initializes lazily.
         return None
@@ -34,10 +35,8 @@ class AzureBlobStorage:
         blob_name = f"{now:%Y/%m/%d}/{document_id}_{safe_name}"
 
         container = self._client.get_container_client(self._container_name)
-        try:
+        with suppress(ResourceExistsError):
             await container.create_container()
-        except ResourceExistsError:
-            pass  # container already exists
         blob = container.get_blob_client(blob_name)
         response = await blob.upload_blob(
             payload,
@@ -52,3 +51,7 @@ class AzureBlobStorage:
             blob_url=blob.url,
             etag=response.get("etag", ""),
         )
+
+    async def download(self, *, container: str, blob_name: str) -> bytes:
+        blob = self._client.get_container_client(container).get_blob_client(blob_name)
+        return await (await blob.download_blob()).readall()

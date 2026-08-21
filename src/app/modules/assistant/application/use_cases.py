@@ -1,15 +1,19 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.modules.assistant.application.commands import AssistantQueryCommand
+from app.modules.assistant.application.context.providers import ContextRequest
 from app.modules.assistant.application.ports import (
     AgentOrchestratorPort,
     AssistantTelemetryPort,
+    ContextAssemblerPort,
     ConversationStorePort,
     ConversationTurn,
+    EraseUserMemoryResult,
     ToolInvoker,
     ToolRuntimePort,
+    UserMemoryErasePort,
 )
 from app.modules.assistant.contracts.messages import (
     AssistantQueryResponseV1,
@@ -27,28 +31,42 @@ class OrchestrateAssistantQuery:
     conversation_store: ConversationStorePort
     telemetry: AssistantTelemetryPort
     tool_policy: ToolCallPolicy
+    context_assembler: ContextAssemblerPort
 
     async def execute(self, command: AssistantQueryCommand) -> AssistantQueryResponseV1:
         self.telemetry.query_started(command.query)
         conversation_id = command.conversation_id or uuid4()
-        history = await self.conversation_store.read_recent(conversation_id, limit=12)
+        owner_user_id = command.authorization_context.user_id
+        history = await self.conversation_store.read_recent(
+            conversation_id,
+            limit=12,
+            owner_user_id=owner_user_id,
+        )
+        context = await self.context_assembler.assemble(
+            ContextRequest(
+                conversation_id=conversation_id,
+                user_query=command.query,
+                authorization_context=command.authorization_context,
+                recent_turns=history,
+            )
+        )
 
         try:
             tools = await self.tool_runtime.list_tools()
-            
+
             run = await self.agent_orchestrator.run(
                 conversation_id=conversation_id,
                 user_query=command.query,
                 available_tools=tools,
-                tool_invoker=self._tool_invoker(command.authorization_context),
-                conversation_history=history,
+                tool_invoker=self._tool_invoker(command.authorization_context, conversation_id),
+                context=context,
                 tool_policy=self.tool_policy,
                 max_tool_calls=command.max_tool_calls,
                 allow_tool_calls=command.allow_tool_calls,
             )
         except Exception as ex:
             raise AssistantOrchestrationFailedError(str(ex)) from ex
-        
+
         await self.conversation_store.append(
             conversation_id,
             ConversationTurn(
@@ -56,8 +74,9 @@ class OrchestrateAssistantQuery:
                 content=command.query,
                 created_at_utc=datetime.now(UTC),
             ),
+            owner_user_id=owner_user_id,
         )
-        
+
         await self.conversation_store.append(
             conversation_id,
             ConversationTurn(
@@ -65,6 +84,7 @@ class OrchestrateAssistantQuery:
                 content=run.answer,
                 created_at_utc=datetime.now(UTC),
             ),
+            owner_user_id=owner_user_id,
         )
 
         for item in run.tool_calls:
@@ -88,12 +108,25 @@ class OrchestrateAssistantQuery:
             ],
         )
 
-    def _tool_invoker(self, authorization_context: AuthorizationContext) -> ToolInvoker:
+    def _tool_invoker(
+        self,
+        authorization_context: AuthorizationContext,
+        conversation_id: UUID,
+    ) -> ToolInvoker:
         async def invoke(tool_name: str, payload: dict[str, object]) -> dict[str, object]:
             return await self.tool_runtime.invoke(
                 tool_name,
                 payload,
                 authorization_context,
+                conversation_id,
             )
 
         return invoke
+
+
+@dataclass(slots=True)
+class EraseUserMemory:
+    eraser: UserMemoryErasePort
+
+    async def execute(self, owner_user_id: UUID) -> EraseUserMemoryResult:
+        return await self.eraser.erase_user_memory(owner_user_id)
