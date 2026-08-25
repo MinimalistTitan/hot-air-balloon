@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 ToolInvoker = Callable[[str, dict[str, object]], Awaitable[dict[str, object]]]
 
+
 @dataclass(frozen=True, slots=True)
 class ConversationTurn:
     role: str
@@ -109,6 +110,14 @@ class EmbeddingPort(Protocol):
 class VectorIndexPort(Protocol):
     async def upsert(self, namespace: str, records: list[VectorRecord]) -> None: ...
 
+    async def query_ids(
+        self,
+        namespace: str,
+        values: list[float],
+        limit: int,
+        metadata_filter: dict[str, str],
+    ) -> list[str]: ...
+
     async def fetch_ids(self, namespace: str, vector_ids: list[str]) -> set[str]: ...
 
     async def list_ids(self, namespace: str) -> set[str]: ...
@@ -122,6 +131,15 @@ class LongTermMemoryPort(Protocol):
 
 class UserMemoryReaderPort(Protocol):
     async def read_recent_user_memories(self, owner_user_id: UUID, limit: int) -> list[str]: ...
+
+
+class DocumentMemoryReaderPort(Protocol):
+    async def read_document_chunks(
+        self,
+        query: str,
+        authorization_context: AuthorizationContext,
+        limit: int,
+    ) -> list[str]: ...
 
 
 class UserMemoryErasePort(Protocol):

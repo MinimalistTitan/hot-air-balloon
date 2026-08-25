@@ -1,6 +1,7 @@
 from enum import StrEnum
 from functools import lru_cache
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,6 +23,9 @@ class Settings(BaseSettings):
         populate_by_name=True,
     )
 
+    # ---------------------------------------------------------------------
+    # Core service configuration
+    # ---------------------------------------------------------------------
     service_name: str = "hot-air-balloon"
     environment: Environment = Environment.LOCAL
     api_prefix: str = "/api/v1"
@@ -37,60 +41,31 @@ class Settings(BaseSettings):
     database_max_overflow: int = Field(default=20, ge=0)
     database_pool_recycle_seconds: int = Field(default=1800, ge=30)
 
-    trusted_hosts: list[str] = ["localhost", "127.0.0.1", "testserver"]
-    cors_origins: list[str] = []
+    trusted_hosts: list[str] = Field(
+        default_factory=lambda: ["localhost", "127.0.0.1", "testserver"]
+    )
+    cors_origins: list[str] = Field(default_factory=list)
 
-    smoke_enabled: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("APP_SMOKE_ENABLED", "APP_SMOKE_ENABLED"),
-    )
-    chat_model: str = Field(
-        default="gpt-5.4",
-        validation_alias=AliasChoices("APP_CHAT_MODEL", "APP_CHAT_MODEL"),
-    )
-    chat_api_key: SecretStr | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "APP_CHAT_API_KEY",
-            "APP_CHAT_API_KEY",
-        ),
-    )
-    embedding_model: str = Field(
-        default="text-embedding-3-small",
-        validation_alias=AliasChoices("APP_EMBEDDING_MODEL", "APP_EMBEDDING_MODEL"),
-    )
-    embedding_api_key: SecretStr | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "APP_EMBEDDING_API_KEY",
-            "APP_EMBEDDING_API_KEY",
-        ),
-    )
-    timeout_seconds: float = Field(
-        default=15.0,
-        gt=1.0,
-        le=120.0,
-        validation_alias=AliasChoices("APP_TIMEOUT_SECONDS", "APP_TIMEOUT_SECONDS"),
-    )
+    # ---------------------------------------------------------------------
+    # AI / assistant configuration
+    # ---------------------------------------------------------------------
+    smoke_enabled: bool = Field(default=False)
+    chat_model: str = Field(default="gpt-5.4")
+    chat_api_key: SecretStr | None = None
+    embedding_model: str = Field(default="text-embedding-3-small")
+    embedding_api_key: SecretStr | None = None
+
+    timeout_seconds: float = Field(default=15.0, gt=1.0, le=120.0)
     context_budget_tokens: int = Field(default=8000, ge=1000, le=200_000)
     context_recent_turn_limit: int = Field(default=12, ge=0, le=100)
+
     short_term_retention_days: int = Field(default=90, ge=1)
     assistant_conversation_retention_days: int = Field(default=180, ge=1)
-    long_term_memory_enabled: bool = False
-    pinecone_api_key: SecretStr | None = None
-    pinecone_index_name: str = "hot-air-balloon"
-    pinecone_user_memory_namespace: str = "user-memory"
-    pinecone_documents_namespace: str = "documents"
-    long_term_recall_top_k: int = Field(default=6, ge=1, le=50)
-    long_term_recall_min_score: float = Field(default=0.25, ge=0.0, le=1.0)
-    vector_sync_batch_size: int = Field(default=64, ge=1, le=500)
-    vector_sync_poll_interval_seconds: float = Field(default=2.0, ge=0.1, le=60.0)
-    vector_reconciliation_interval_seconds: float = Field(default=86_400.0, ge=60.0)
-    memory_retention_batch_size: int = Field(default=64, ge=1, le=500)
-    memory_retention_poll_interval_seconds: float = Field(default=30.0, ge=1.0, le=3_600.0)
-    consolidation_enabled: bool = False
-    consolidation_idle_minutes: int = Field(default=30, ge=1, le=1440)
-    summary_retention_days: int = Field(default=180, ge=1, le=3650)
+    short_term_retention_interval_seconds: float = Field(
+        default=86_400.0,
+        ge=60.0,
+        le=604_800.0,
+    )
 
     chat_base_url: str = Field(
         default="https://aiportalapi.stu-platform.live/jpe/v2",
@@ -101,30 +76,62 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Document upload defaults
+    # ---------------------------------------------------------------------
+    # Long-term memory / vector configuration
+    # ---------------------------------------------------------------------
+    long_term_memory_enabled: bool = False
+    pinecone_api_key: SecretStr | None = None
+    pinecone_index_name: str = "hot-air-balloon"
+    pinecone_user_memory_namespace: str = "user-memory"
+    pinecone_documents_namespace: str = "documents"
+
+    long_term_recall_top_k: int = Field(default=6, ge=1, le=50)
+    long_term_recall_min_score: float = Field(default=0.25, ge=0.0, le=1.0)
+
+    vector_sync_batch_size: int = Field(default=64, ge=1, le=500)
+    vector_sync_poll_interval_seconds: float = Field(default=2.0, ge=0.1, le=60.0)
+    vector_reconciliation_interval_seconds: float = Field(default=86_400.0, ge=60.0)
+
+    memory_retention_batch_size: int = Field(default=64, ge=1, le=500)
+    memory_retention_poll_interval_seconds: float = Field(default=30.0, ge=1.0, le=3_600.0)
+
+    consolidation_enabled: bool = False
+    consolidation_idle_minutes: int = Field(default=30, ge=1, le=1440)
+    summary_retention_days: int = Field(default=180, ge=1, le=3650)
+    fact_candidate_retention_days: int = Field(default=30, ge=1, le=365)
+    fact_max_statement_characters: int = Field(default=500, ge=32, le=4000)
+
+    # ---------------------------------------------------------------------
+    # Document ingestion configuration
+    # ---------------------------------------------------------------------
     documents_upload_max_bytes: int = Field(default=25 * 1024 * 1024, ge=1024)
-    documents_allowed_content_types: list[str] = [
-        "application/pdf",
-        "text/plain",
-        "text/markdown",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ]
+    documents_allowed_content_types: list[str] = Field(
+        default_factory=lambda: [
+            "application/pdf",
+            "text/plain",
+            "text/markdown",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ]
+    )
+
     document_ingestion_enabled: bool = False
     document_ingestion_batch_size: int = Field(default=10, ge=1, le=100)
     document_ingestion_poll_interval_seconds: float = Field(default=2.0, ge=0.1, le=60.0)
     document_chunk_tokens: int = Field(default=500, ge=50, le=4_000)
     document_chunk_overlap_tokens: int = Field(default=60, ge=0, le=500)
 
-    # Azure Blob Storage configuration
     azure_blob_enabled: bool = False
     azure_blob_connection_string: SecretStr | None = None
     azure_blob_container_name: str = "documents"
 
-    # Kafka and outbox publisher configuration
+    # ---------------------------------------------------------------------
+    # Kafka / outbox configuration
+    # ---------------------------------------------------------------------
     kafka_enabled: bool = False
-    kafka_bootstrap_servers: list[str] = ["localhost:9092"]
+    kafka_bootstrap_servers: list[str] = Field(default_factory=lambda: ["localhost:9092"])
     kafka_documents_topic: str = "document.uploaded.v1"
     kafka_client_id: str = "hot-air-balloon-api"
+
     outbox_publisher_enabled: bool = False
     outbox_publish_batch_size: int = Field(default=100, ge=1, le=1000)
     outbox_poll_interval_seconds: float = Field(default=1.0, ge=0.1, le=30.0)
@@ -175,9 +182,13 @@ class Settings(BaseSettings):
             if not self.azure_blob_enabled:
                 raise ValueError("document_ingestion_enabled requires azure_blob_enabled=true")
             if not self.long_term_memory_enabled:
-                raise ValueError("document_ingestion_enabled requires long_term_memory_enabled=true")
+                raise ValueError(
+                    "document_ingestion_enabled requires long_term_memory_enabled=true"
+                )
             if self.document_chunk_overlap_tokens >= self.document_chunk_tokens:
-                raise ValueError("document_chunk_overlap_tokens must be smaller than document_chunk_tokens")
+                raise ValueError(
+                    "document_chunk_overlap_tokens must be smaller than document_chunk_tokens"
+                )
 
         return self
 
@@ -197,6 +208,16 @@ class Settings(BaseSettings):
             raise ValueError("chat_api_key is required when consolidation_enabled is true")
 
         return self
+
+
+    local_auth_bypass_enabled: bool = False
+
+    @model_validator(mode="after")
+    def prevent_nonlocal_auth_bypass(self) -> Self:
+        if self.local_auth_bypass_enabled and self.environment is not Environment.LOCAL:
+            raise ValueError("local_auth_bypass_enabled is only permitted locally")
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:

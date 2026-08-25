@@ -58,6 +58,7 @@ packages = ["src/app"]
 [tool.pytest.ini_options]
 addopts = "-q --cov=app --cov-report=term-missing"
 asyncio_mode = "auto"
+pythonpath = [".", "src"]
 testpaths = ["tests"]
 
 [tool.coverage.run]

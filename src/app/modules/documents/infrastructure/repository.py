@@ -29,6 +29,7 @@ class DocumentRepository:
             blob_url=record.blob_url,
             blob_etag=record.blob_etag,
             status=record.status,
+            site_code=record.site_code,
             created_at=record.created_at,
             idempotency_key=record.idempotency_key,
         )
@@ -46,6 +47,7 @@ class DocumentRepository:
                 blob_url=doc.blob_url,
                 blob_etag=doc.blob_etag,
                 status=doc.status,
+                site_code=doc.site_code,
                 idempotency_key=doc.idempotency_key,
                 created_at=doc.created_at,
             )

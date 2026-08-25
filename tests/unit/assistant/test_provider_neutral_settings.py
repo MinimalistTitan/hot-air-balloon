@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.core.config import Settings
 
 
@@ -17,3 +20,8 @@ def test_settings_accepts_provider_neutral_names() -> None:
     assert settings.embedding_model == "text-embedding-3-small"
     assert settings.embedding_api_key.get_secret_value() == "embedding-secret"
     assert settings.timeout_seconds == 30.0
+
+
+def test_settings_rejects_semantic_cache_for_agent_requests() -> None:
+    with pytest.raises(ValidationError, match="different prompts can reuse stale tool decisions"):
+        Settings(chat_base_url="https://aiportalapi.stu-platform.live/jpe/v2")

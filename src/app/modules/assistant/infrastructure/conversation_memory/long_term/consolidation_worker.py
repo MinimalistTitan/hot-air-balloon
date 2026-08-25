@@ -9,13 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.database import SessionFactory
 from app.core.life_cycle import ManagedResource
-from app.modules.assistant.application.ports import (
-    ConversationTurn,
-    LongTermMemoryPort,
-    MemoryRecordWrite,
-)
-from app.modules.assistant.infrastructure.conversation_memory.long_term.llm_summarizer import (
-    ConversationSummary,
+from app.modules.assistant.application.facts.act_policy import FactAcceptancePolicy
+from app.modules.assistant.application.ports import ConversationTurn
+from app.modules.assistant.domain.facts import ExtractedFact, FactDecision, FactEvaluation
+from app.modules.assistant.infrastructure.conversation_memory.long_term.fact_promoter import (
+    FactPromotionResult,
 )
 from app.modules.assistant.infrastructure.conversation_memory.models import (
     AssistantConversationRecord,
@@ -24,18 +22,46 @@ from app.modules.assistant.infrastructure.conversation_memory.models import (
 from app.modules.assistant.infrastructure.tool_gateway.models import AssistantToolAuditRecord
 
 
-class ConversationSummarizerPort(Protocol):
-    async def summarize(self, turns: list[ConversationTurn]) -> ConversationSummary: ...
+class FactExtractorPort(Protocol):
+    async def extract(self, turns: list[tuple[UUID, ConversationTurn]]) -> list[ExtractedFact]: ...
+
+
+class FactCandidateStorePort(Protocol):
+    async def record_outcome(
+        self,
+        *,
+        conversation_id: UUID,
+        owner_user_id: UUID,
+        fact: ExtractedFact,
+        decision: FactDecision,
+        reason: str,
+    ) -> UUID: ...
+
+    async def mark_promoted(self, candidate_id: UUID, memory_record_id: UUID) -> None: ...
+
+
+class FactPromoterPort(Protocol):
+    async def promote(
+        self,
+        fact: ExtractedFact,
+        evaluation: FactEvaluation,
+        *,
+        owner_user_id: UUID,
+        required_permissions: frozenset[str],
+        source_turn_ids: tuple[UUID, ...],
+        now: datetime,
+    ) -> FactPromotionResult: ...
 
 
 @dataclass(slots=True)
 class ConsolidationWorker(ManagedResource):
     session_factory: SessionFactory
-    summarizer: ConversationSummarizerPort
-    memory_store: LongTermMemoryPort
+    fact_extractor: FactExtractorPort
+    fact_policy: FactAcceptancePolicy
+    candidate_store: FactCandidateStorePort
+    fact_promoter: FactPromoterPort
     tool_permissions_by_name: dict[str, str]
     idle_minutes: int
-    summary_retention_days: int
     poll_interval_seconds: float = 30.0
     batch_size: int = 20
     _stop_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
@@ -73,7 +99,10 @@ class ConsolidationWorker(ManagedResource):
                         await session.scalars(
                             select(ConversationTurnRecord)
                             .where(ConversationTurnRecord.conversation_id == conversation.id)
-                            .order_by(ConversationTurnRecord.created_at.asc(), ConversationTurnRecord.id.asc())
+                            .order_by(
+                                ConversationTurnRecord.created_at.asc(),
+                                ConversationTurnRecord.id.asc(),
+                            )
                         )
                     ).all()
                 )
@@ -82,34 +111,47 @@ class ConsolidationWorker(ManagedResource):
                     processed += 1
                     continue
 
-                summary = await self.summarizer.summarize(
-                    [
+                conversation_turns = [
+                    (
+                        turn.id,
                         ConversationTurn(
                             role=turn.role,
                             content=turn.content,
                             created_at_utc=turn.created_at,
-                        )
-                        for turn in turns
-                    ]
-                )
+                        ),
+                    )
+                    for turn in turns
+                ]
+                facts = await self.fact_extractor.extract(conversation_turns)
                 required_permissions = await self._required_permissions_for_conversation(
                     session=session,
                     conversation_id=conversation.id,
                 )
-                expires_at = datetime.now(UTC) + timedelta(days=self.summary_retention_days)
                 source_turn_ids = tuple(turn.id for turn in turns)
+                source_turn_id_set = frozenset(source_turn_ids)
+                now = datetime.now(UTC)
 
-                for fact in summary.salient_facts:
-                    await self.memory_store.record(
-                        MemoryRecordWrite(
-                            kind="conversation_summary",
-                            content=fact,
-                            owner_user_id=conversation.owner_user_id,
-                            site_code=None,
-                            required_permissions=required_permissions,
-                            source_turn_ids=source_turn_ids,
-                            expires_at_utc=expires_at,
-                        )
+                for fact in facts:
+                    evaluation = self.fact_policy.evaluate(fact, source_turn_id_set, now)
+                    candidate_id = await self.candidate_store.record_outcome(
+                        conversation_id=conversation.id,
+                        owner_user_id=conversation.owner_user_id,
+                        fact=fact,
+                        decision=evaluation.decision,
+                        reason=evaluation.reason,
+                    )
+                    if evaluation.decision.value != "accepted":
+                        continue
+                    promotion = await self.fact_promoter.promote(
+                        fact,
+                        evaluation,
+                        owner_user_id=conversation.owner_user_id,
+                        required_permissions=required_permissions,
+                        source_turn_ids=source_turn_ids,
+                        now=now,
+                    )
+                    await self.candidate_store.mark_promoted(
+                        candidate_id, promotion.memory_record_id
                     )
 
                 conversation.consolidated_at = datetime.now(UTC)

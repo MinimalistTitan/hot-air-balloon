@@ -81,7 +81,7 @@ class DocumentIngestionConsumer(ManagedResource):
                             kind="document_chunk",
                             content=chunk,
                             owner_user_id=None,
-                            site_code=None,
+                            site_code=document.site_code,
                             required_permissions=frozenset({"documents:read"}),
                             source_document_id=document.id,
                         )

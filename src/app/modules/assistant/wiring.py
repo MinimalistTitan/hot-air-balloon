@@ -8,6 +8,9 @@ from app.core.config import Settings
 from app.core.database.database import SessionFactory
 from app.modules.assistant.application.context.assembler import DefaultContextAssembler
 from app.modules.assistant.application.context.budget import TokenBudgetAllocator
+from app.modules.assistant.application.context.document_recall_provider import (
+    DocumentRecallProvider,
+)
 from app.modules.assistant.application.context.providers import ContextProviderPort
 from app.modules.assistant.application.context.recent_turns_provider import RecentTurnsProvider
 from app.modules.assistant.application.context.user_memory_provider import UserMemoryProvider
@@ -38,11 +41,20 @@ from app.modules.assistant.infrastructure.context.tiktoken_counter import Tiktok
 from app.modules.assistant.infrastructure.conversation_memory.in_memory.inmemory_conversation_store import (
     InMemoryConversationStore,
 )
+from app.modules.assistant.infrastructure.conversation_memory.long_term.document_memory_reader import (
+    PineconeDocumentMemoryReader,
+)
 from app.modules.assistant.infrastructure.conversation_memory.long_term.memory_record_repository import (
     MemoryRecordRepository,
 )
+from app.modules.assistant.infrastructure.conversation_memory.long_term.openai_embedding_client import (
+    OpenAIEmbeddingClient,
+)
 from app.modules.assistant.infrastructure.conversation_memory.long_term.pinecone_index import (
     PineconeVectorIndex,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.rederivable_fields import (
+    collect_rederivable_fields,
 )
 from app.modules.assistant.infrastructure.conversation_memory.long_term.user_memory_eraser import (
     UserMemoryEraser,
@@ -66,6 +78,7 @@ from app.modules.assistant.tool_gateway.registry import ToolRegistry
 class AssistantModule:
     query: OrchestrateAssistantQuery
     erase_user_memory: EraseUserMemory | None = None
+    rederivable_terms: frozenset[str] = frozenset()
 
 
 def build_langgraph_agent_orchestrator(
@@ -125,23 +138,21 @@ def build_assistant_module(
     effective_policy = tool_policy
     if effective_policy is None:
         effective_policy = ToolCallPolicy(
-            allowed_tool_names=frozenset(
-                tool.name for tool in registered_tools_tuple
-            ),
+            allowed_tool_names=frozenset(tool.name for tool in registered_tools_tuple),
             max_total_calls=1,
             max_calls_per_tool=1,
             fail_on_policy_violation=True,
         )
 
+    registry = ToolRegistry()
+    for tool in registered_tools_tuple:
+        registry.register(tool)
+    rederivable_terms = collect_rederivable_fields(registry).terms
+
     effective_tool_runtime = tool_runtime
     if effective_tool_runtime is None:
         if session_factory is None:
             raise ValueError("session_factory is required when tool_runtime is not provided")
-
-        registry = ToolRegistry()
-
-        for tool in registered_tools_tuple:
-            registry.register(tool)
 
         effective_tool_runtime = GatewayToolRuntime(
             registry=registry,
@@ -161,29 +172,46 @@ def build_assistant_module(
         )
     )
 
-    effective_telemetry = (
-        telemetry
-        if telemetry is not None
-        else StructlogAssistantTelemetry()
-    )
+    effective_telemetry = telemetry if telemetry is not None else StructlogAssistantTelemetry()
 
     effective_context_assembler = context_assembler
     if effective_context_assembler is None:
         counter = TiktokenCounter()
         providers: list[ContextProviderPort] = [RecentTurnsProvider(counter=counter)]
         if settings.long_term_memory_enabled and session_factory is not None:
+            memory_repository = MemoryRecordRepository(
+                session_factory=session_factory,
+                embedding_model=settings.embedding_model,
+                user_memory_namespace=settings.pinecone_user_memory_namespace,
+                documents_namespace=settings.pinecone_documents_namespace,
+            )
             providers.append(
                 UserMemoryProvider(
-                    memory_reader=MemoryRecordRepository(
-                        session_factory=session_factory,
-                        embedding_model=settings.embedding_model,
-                        user_memory_namespace=settings.pinecone_user_memory_namespace,
-                        documents_namespace=settings.pinecone_documents_namespace,
-                    ),
+                    memory_reader=memory_repository,
                     counter=counter,
                     limit=settings.long_term_recall_top_k,
                 )
             )
+            if settings.pinecone_api_key is not None and settings.embedding_api_key is not None:
+                providers.append(
+                    DocumentRecallProvider(
+                        memory_reader=PineconeDocumentMemoryReader(
+                            embedding_client=OpenAIEmbeddingClient(
+                                api_key=settings.embedding_api_key.get_secret_value(),
+                                model=settings.embedding_model,
+                                base_url=settings.chat_base_url,
+                            ),
+                            vector_index=PineconeVectorIndex(
+                                api_key=settings.pinecone_api_key.get_secret_value(),
+                                index_name=settings.pinecone_index_name,
+                            ),
+                            memory_repository=memory_repository,
+                            namespace=settings.pinecone_documents_namespace,
+                        ),
+                        counter=counter,
+                        limit=settings.long_term_recall_top_k,
+                    )
+                )
         effective_context_assembler = DefaultContextAssembler(
             providers=tuple(providers),
             allocator=TokenBudgetAllocator(),
@@ -220,4 +248,5 @@ def build_assistant_module(
             if effective_user_memory_eraser is not None
             else None
         ),
+        rederivable_terms=rederivable_terms,
     )

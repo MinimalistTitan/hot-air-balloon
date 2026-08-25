@@ -28,7 +28,7 @@ class GatewayToolRuntime(ToolRuntimePort):
 
     async def list_tools(self) -> list[ToolDescriptor]:
         return [
-            ToolDescriptor(name=tool.name, description=tool.description)
+            ToolDescriptor(name=tool.name, description=tool.description, input_schema=tool.input_model.model_json_schema())
             for tool in self.registry.list_tools()
         ]
 

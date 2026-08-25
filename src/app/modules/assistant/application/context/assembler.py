@@ -22,7 +22,9 @@ class DefaultContextAssembler:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for result in results:
-            if isinstance(result, Exception):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, BaseException):
                 continue
             aggregated.extend(result)
 

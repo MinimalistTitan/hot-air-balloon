@@ -1,14 +1,14 @@
 # Context & Memory Management — Integration Plan
 
-Status: proposed
-Date: 2026-08-19
+Status: implemented baseline with follow-up options
+Date: 2026-08-22
 Scope: `src/app/modules/assistant`, `src/app/modules/documents`, `src/app/core/config.py`, `src/app/container.py`
 
 ---
 
 ## 1. Objective
 
-Introduce a **Context Assembly** stage between the application use case and the LangGraph orchestrator, backed by a three-tier memory model. Today the assistant serialises raw conversation history and raw tool results directly into the prompt with no budget, and persists turns with a lossy count-based delete. This plan replaces both with a deterministic, authorization-scoped, production-shaped layer.
+The assistant now uses a **Context Assembly** stage before the primary `LangGraphAgentOrchestrator`, backed by a three-tier memory model. This document records the implemented baseline and the remaining optional enhancements.
 
 ---
 
@@ -81,7 +81,39 @@ flowchart LR
 
 ---
 
-## 6. Phased delivery
+## 6. Current implementation status
+
+| Capability            | Status   | Current implementation                                                                                                                                                    |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Primary orchestration | Complete | `LangGraphAgentOrchestrator`; `AssembledContext.render()` supplies working context. The legacy `conversation_history` graph field is initialized empty.                   |
+| Tool runtime          | Complete | `GatewayToolRuntime`, `ToolRegistry`, and `ToolGateway`; no `GuardedLocalRegistryRuntime` or `LocalToolRegistry` path is used.                                            |
+| Context budget        | Complete | `DefaultContextAssembler`, `TokenBudgetAllocator`, `RecentTurnsProvider`, and `UserMemoryProvider`.                                                                       |
+| Short-term memory     | Complete | Durable owner-scoped turns, conversation records, expiry, and `ShortTermRetentionJob`.                                                                                    |
+| Long-term memory      | Complete | Postgres mirror records, Pinecone sync, reconciliation, retention, and user erasure.                                                                                      |
+| Offline ingestion     | Complete | Blob download, extraction, token-aware chunking, durable chunk records, and asynchronous vector sync.                                                                     |
+| Document retrieval    | Complete | `DocumentRecallProvider` requires `DOCUMENTS_READ`; Pinecone returns candidates, then Postgres rechecks required permissions and site scope before chunks enter context.  |
+| Fact interaction      | Complete | `LlmFactExtractor` proposes structured facts; `FactAcceptancePolicy`, candidate diagnostics, `FactPromoter`, and exact user-scoped hash deduplication decide persistence. |
+
+### Fact interaction rules
+
+- `act_policy.py` classifies only `PREFERENCE`, `ENTITY_AFFINITY`, `EPISODIC_REFERENCE`, `DOMAIN_CONSTRAINT`, and `ATTRIBUTED_OPINION` as storable.
+- Each candidate must cite turn IDs from its source conversation. Facts without valid evidence are rejected.
+- Tool-output field names are collected from `ToolRegistry` during wiring and used as re-derivable exclusions. Current metrics, statuses, dates, quantities, and authorization-related assertions are not promoted.
+- A candidate record is retained for 30 days for diagnostics. Valid candidates are promoted immediately; no human approval or corroboration threshold runs in v1.
+- Promoted user facts use a normalized content hash with an active user-scoped uniqueness constraint. A duplicate preserves source-turn lineage and does not create another vector.
+
+### Document scope
+
+`DocumentRecord.site_code` and chunk metadata now carry document scope. The current product decision is global documents, so uploads leave `site_code` as `NULL`; `DOCUMENTS_READ` is required. The retrieval path already honors a non-null site code, so a future trusted upload-site assignment can enable site-scoped RAG without changing retrieval.
+
+### Remaining optional follow-up
+
+1. Add a trusted, authorized site selection to the upload workflow to use non-null document scopes.
+2. Add corroboration thresholds for entity-affinity facts using the retained candidate diagnostics.
+3. Add vector similarity / contradiction resolution after exact-hash deduplication proves insufficient.
+4. Add user-facing memory review or deletion controls only after the backend policy is observed in production.
+
+## 7. Historical delivery baseline
 
 ### Phase 0 — Context assembly foundation
 *No new storage, no behaviour change. Highest value, lowest risk.*

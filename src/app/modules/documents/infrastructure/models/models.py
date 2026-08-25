@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, Integer, JSON, String, Text, Uuid, func
+from sqlalchemy import JSON, DateTime, Integer, String, Text, Uuid, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +21,7 @@ class DocumentRecord(Base):
     blob_url: Mapped[str] = mapped_column(Text, nullable=False)
     blob_etag: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    site_code: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     ingestion_error: Mapped[str | None] = mapped_column(Text(), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(

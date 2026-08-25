@@ -15,6 +15,7 @@ class Document:
     blob_url: str
     blob_etag: str
     status: str
+    site_code: str | None
     created_at: datetime
     idempotency_key: str | None
 
@@ -30,6 +31,7 @@ class Document:
         blob_name: str,
         blob_url: str,
         blob_etag: str,
+        site_code: str | None = None,
         idempotency_key: str | None = None,
         document_id: UUID | None = None,
         now: datetime | None = None,
@@ -46,6 +48,7 @@ class Document:
             blob_url=blob_url,
             blob_etag=blob_etag,
             status="queued",
+            site_code=site_code.strip() if site_code is not None else None,
             created_at=created_at,
             idempotency_key=idempotency_key,
         )

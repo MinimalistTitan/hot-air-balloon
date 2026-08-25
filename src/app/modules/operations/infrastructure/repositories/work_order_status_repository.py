@@ -11,23 +11,57 @@ from app.modules.operations.domain.manufacturing_maintenance.work_order_status i
     WorkOrderStatus,
 )
 from app.modules.operations.infrastructure.manufacturing_maintenance.models import WorkOrderRecord
+from app.modules.operations.infrastructure.manufacturing_maintenance.models.models import SiteRecord
 
+
+def _snapshot(row: WorkOrderRecord) -> WorkOrderStatusSnapshot:
+    return WorkOrderStatusSnapshot(
+        id=row.id,
+        code=row.code,
+        status=WorkOrderStatus(row.status),
+    )
 
 class WorkOrderStatusRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def find_status_by_code(self, work_order_code: str) -> WorkOrderStatusSnapshot | None:
-        query = select(WorkOrderRecord).where(WorkOrderRecord.code == work_order_code)
-        row = (await self._session.execute(query)).scalar_one_or_none()
-        if row is None:
-            return None
-
-        return WorkOrderStatusSnapshot(
-            id=row.id,
-            code=row.code,
-            status=WorkOrderStatus(row.status),
+    async def find_status_by_id(
+        self,
+        work_order_id: UUID,
+        *,
+        site_code: str | None = None,
+    ) -> WorkOrderStatusSnapshot | None:
+        query = select(WorkOrderRecord).where(
+            WorkOrderRecord.id == work_order_id
         )
+
+        if site_code is not None:
+            query = query.join(
+                SiteRecord,
+                WorkOrderRecord.site_id == SiteRecord.id,
+            ).where(SiteRecord.code == site_code)
+
+        row = (await self._session.execute(query)).scalar_one_or_none()
+        return _snapshot(row) if row is not None else None
+
+    async def find_status_by_code(
+        self,
+        work_order_code: str,
+        *,
+        site_code: str | None = None,
+    ) -> list[WorkOrderStatusSnapshot]:
+        query = select(WorkOrderRecord).where(
+            WorkOrderRecord.code == work_order_code
+        )
+
+        if site_code is not None:
+            query = query.join(
+                SiteRecord,
+                WorkOrderRecord.site_id == SiteRecord.id,
+            ).where(SiteRecord.code == site_code)
+
+        rows = (await self._session.execute(query)).scalars().all()
+        return [_snapshot(row) for row in rows]
 
     async def apply_status(
         self,

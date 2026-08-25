@@ -10,6 +10,7 @@ from app.core.database.database import SessionFactory
 from app.core.life_cycle import ManagedResource
 from app.modules.assistant.application.ports import VectorIndexPort
 from app.modules.assistant.infrastructure.conversation_memory.long_term.models import (
+    AssistantMemoryCandidate,
     AssistantMemoryRecord,
 )
 
@@ -19,6 +20,7 @@ class MemoryRetentionResult:
     soft_deleted_records: int
     hard_deleted_records: int
     deleted_vectors: int
+    deleted_candidates: int
 
 
 @dataclass(slots=True)
@@ -44,11 +46,31 @@ class MemoryRetentionJob(ManagedResource):
         now = datetime.now(UTC)
         soft_deleted_records = await self._soft_delete_expired(now=now)
         hard_deleted_records, deleted_vectors = await self._delete_soft_deleted_batch()
+        deleted_candidates = await self._delete_expired_candidates(now=now)
         return MemoryRetentionResult(
             soft_deleted_records=soft_deleted_records,
             hard_deleted_records=hard_deleted_records,
             deleted_vectors=deleted_vectors,
+            deleted_candidates=deleted_candidates,
         )
+
+    async def _delete_expired_candidates(self, *, now: datetime) -> int:
+        async with self.session_factory() as session:
+            candidates = list(
+                (
+                    await session.scalars(
+                        select(AssistantMemoryCandidate)
+                        .where(AssistantMemoryCandidate.expires_at < now)
+                        .order_by(AssistantMemoryCandidate.created_at.asc())
+                        .limit(self.batch_size)
+                        .with_for_update(skip_locked=True)
+                    )
+                ).all()
+            )
+            for candidate in candidates:
+                await session.delete(candidate)
+            await session.commit()
+        return len(candidates)
 
     async def _soft_delete_expired(self, *, now: datetime) -> int:
         async with self.session_factory() as session:
@@ -81,7 +103,9 @@ class MemoryRetentionJob(ManagedResource):
                     await session.scalars(
                         select(AssistantMemoryRecord)
                         .where(AssistantMemoryRecord.deleted_at.is_not(None))
-                        .order_by(AssistantMemoryRecord.deleted_at.asc(), AssistantMemoryRecord.id.asc())
+                        .order_by(
+                            AssistantMemoryRecord.deleted_at.asc(), AssistantMemoryRecord.id.asc()
+                        )
                         .limit(self.batch_size)
                         .with_for_update(skip_locked=True)
                     )

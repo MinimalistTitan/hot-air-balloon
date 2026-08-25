@@ -7,14 +7,21 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.database.database import Base, create_session_factory
 from app.modules.assistant.application.context.providers import ContextRequest
 from app.modules.assistant.application.context.user_memory_provider import UserMemoryProvider
+from app.modules.assistant.application.facts.act_policy import FactAcceptancePolicy
 from app.modules.assistant.application.ports import ConversationTurn, MemoryRecordWrite
 from app.modules.assistant.domain.context import ContextKind
+from app.modules.assistant.domain.facts import (
+    ExtractedFact,
+    FactClass,
+    FactDecision,
+    FactEvaluation,
+)
 from app.modules.assistant.infrastructure.context.tiktoken_counter import TiktokenCounter
 from app.modules.assistant.infrastructure.conversation_memory.long_term.consolidation_worker import (
     ConsolidationWorker,
 )
-from app.modules.assistant.infrastructure.conversation_memory.long_term.llm_summarizer import (
-    ConversationSummary,
+from app.modules.assistant.infrastructure.conversation_memory.long_term.fact_promoter import (
+    FactPromotionResult,
 )
 from app.modules.assistant.infrastructure.conversation_memory.long_term.memory_record_repository import (
     MemoryRecordRepository,
@@ -27,25 +34,59 @@ from app.modules.assistant.infrastructure.tool_gateway.models import AssistantTo
 from app.modules.user.domain.authorization import AuthorizationContext, RoleName
 
 
-class FakeSummarizer:
-    async def summarize(self, turns: list[ConversationTurn]) -> ConversationSummary:
+class FakeFactExtractor:
+    async def extract(
+        self,
+        turns: list[tuple[UUID, ConversationTurn]],
+    ) -> list[ExtractedFact]:
         assert len(turns) == 2
-        return ConversationSummary(
-            summary="User likes daily updates.",
-            salient_facts=[
-                "User prefers daily maintenance summaries.",
-                "User asks for concise status updates.",
-            ],
-        )
+        return [
+            ExtractedFact(
+                statement="User prefers daily maintenance summaries.",
+                fact_class=FactClass.PREFERENCE,
+                evidence_turn_ids=(turns[0][0],),
+                entity_refs=(),
+                explicitly_stated=True,
+            )
+        ]
 
 
-class FakeMemoryStore:
+class FakeCandidateStore:
     def __init__(self) -> None:
-        self.writes: list[MemoryRecordWrite] = []
+        self.outcomes: list[FactDecision] = []
+        self.promoted: list[UUID] = []
 
-    async def record(self, memory: MemoryRecordWrite) -> UUID:
-        self.writes.append(memory)
+    async def record_outcome(
+        self,
+        *,
+        conversation_id: UUID,
+        owner_user_id: UUID,
+        fact: ExtractedFact,
+        decision: FactDecision,
+        reason: str,
+    ) -> UUID:
+        del conversation_id, owner_user_id, fact, reason
+        self.outcomes.append(decision)
         return uuid4()
+
+    async def mark_promoted(self, candidate_id: UUID, memory_record_id: UUID) -> None:
+        del candidate_id
+        self.promoted.append(memory_record_id)
+
+
+class FakeFactPromoter:
+    async def promote(
+        self,
+        fact: ExtractedFact,
+        evaluation: FactEvaluation,
+        *,
+        owner_user_id: UUID,
+        required_permissions: frozenset[str],
+        source_turn_ids: tuple[UUID, ...],
+        now: datetime,
+    ) -> FactPromotionResult:
+        del fact, evaluation, owner_user_id, required_permissions, source_turn_ids, now
+        return FactPromotionResult(memory_record_id=uuid4(), decision=FactDecision.ACCEPTED)
 
 
 async def test_consolidation_worker_writes_fact_records_and_marks_conversation() -> None:
@@ -108,27 +149,29 @@ async def test_consolidation_worker_writes_fact_records_and_marks_conversation()
         )
         await session.commit()
 
-    memory_store = FakeMemoryStore()
+    candidate_store = FakeCandidateStore()
     worker = ConsolidationWorker(
         session_factory=session_factory,
-        summarizer=FakeSummarizer(),
-        memory_store=memory_store,
+        fact_extractor=FakeFactExtractor(),
+        fact_policy=FactAcceptancePolicy(
+            max_statement_characters=500, rederivable_terms=frozenset()
+        ),
+        candidate_store=candidate_store,
+        fact_promoter=FakeFactPromoter(),
         tool_permissions_by_name={"get_work_orders": "work_orders:read"},
         idle_minutes=30,
-        summary_retention_days=180,
         batch_size=10,
     )
 
     assert await worker.consolidate_once() == 1
-    assert len(memory_store.writes) == 2
-    assert all(write.kind == "conversation_summary" for write in memory_store.writes)
-    assert all(write.owner_user_id == owner_user_id for write in memory_store.writes)
-    assert all(write.required_permissions == frozenset({"work_orders:read"}) for write in memory_store.writes)
-    assert all(write.source_turn_ids == (first_turn_id, second_turn_id) for write in memory_store.writes)
+    assert candidate_store.outcomes == [FactDecision.ACCEPTED]
+    assert len(candidate_store.promoted) == 1
 
     async with session_factory() as session:
         conversation = await session.scalar(
-            select(AssistantConversationRecord).where(AssistantConversationRecord.id == conversation_id)
+            select(AssistantConversationRecord).where(
+                AssistantConversationRecord.id == conversation_id
+            )
         )
 
     assert conversation is not None

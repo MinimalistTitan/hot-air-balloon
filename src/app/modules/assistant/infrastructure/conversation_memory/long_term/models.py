@@ -45,7 +45,9 @@ class AssistantMemoryRecord(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
-    owner_user_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True, nullable=True)
+    owner_user_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), index=True, nullable=True
+    )
     site_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     required_permissions: Mapped[list[str]] = mapped_column(
         ARRAY(String()).with_variant(JSON(), "sqlite"),
@@ -59,7 +61,9 @@ class AssistantMemoryRecord(Base):
         nullable=False,
         default=list,
     )
-    source_document_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True, nullable=True)
+    source_document_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), index=True, nullable=True
+    )
     vector_namespace: Mapped[str] = mapped_column(String(128), nullable=False)
     vector_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     embedding_model: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -69,3 +73,24 @@ class AssistantMemoryRecord(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     sync_retry_count: Mapped[int] = mapped_column(nullable=False, default=0)
     sync_last_error: Mapped[str | None] = mapped_column(Text(), nullable=True)
+
+
+class AssistantMemoryCandidate(Base):
+    __tablename__ = "assistant_memory_candidates"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    conversation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True, nullable=False)
+    owner_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True, nullable=False)
+    statement: Mapped[str] = mapped_column(Text(), nullable=False)
+    statement_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    fact_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    entity_refs: Mapped[list[str]] = mapped_column(JSON(), nullable=False, default=list)
+    evidence_turn_ids: Mapped[list[UUID]] = mapped_column(UUIDArray(), nullable=False, default=list)
+    explicitly_stated: Mapped[bool] = mapped_column(nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    decision_reason: Mapped[str] = mapped_column(String(128), nullable=False)
+    promoted_memory_record_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True, nullable=False)

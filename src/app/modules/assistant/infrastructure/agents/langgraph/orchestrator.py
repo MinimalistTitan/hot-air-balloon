@@ -68,7 +68,8 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
             "remaining_tool_calls": effective_max_tool_calls,
             "max_calls_per_tool": tool_policy.max_calls_per_tool,
             "next_step": "respond",
-            "answer": context.render(),
+            #"answer": context.render(),
+            "answer": "",
             "finish_reason": None,
         }
         configuration = cast(

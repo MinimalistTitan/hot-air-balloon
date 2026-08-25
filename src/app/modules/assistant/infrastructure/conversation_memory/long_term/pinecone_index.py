@@ -23,6 +23,25 @@ class PineconeVectorIndex(VectorIndexPort):
         ]
         await asyncio.to_thread(self._index.upsert, vectors=vectors, namespace=namespace)
 
+    async def query_ids(
+        self,
+        namespace: str,
+        values: list[float],
+        limit: int,
+        metadata_filter: dict[str, str],
+    ) -> list[str]:
+        if limit <= 0:
+            return []
+        response = await asyncio.to_thread(
+            self._index.query,
+            namespace=namespace,
+            vector=values,
+            top_k=limit,
+            include_metadata=False,
+            filter=metadata_filter,
+        )
+        return [str(match.id) for match in response.matches]
+
     async def fetch_ids(self, namespace: str, vector_ids: list[str]) -> set[str]:
         response = await asyncio.to_thread(self._index.fetch, ids=vector_ids, namespace=namespace)
         vectors: dict[str, object] = response.vectors
@@ -31,9 +50,7 @@ class PineconeVectorIndex(VectorIndexPort):
     async def list_ids(self, namespace: str) -> set[str]:
         def list_ids() -> set[str]:
             return {
-                vector_id
-                for page in self._index.list(namespace=namespace)
-                for vector_id in page
+                vector_id for page in self._index.list(namespace=namespace) for vector_id in page
             }
 
         return await asyncio.to_thread(list_ids)

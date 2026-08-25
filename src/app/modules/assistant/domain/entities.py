@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.modules.assistant.domain.value_object import OrchestrationFinishReason
 
@@ -8,6 +8,7 @@ class ToolDescriptor:
     name: str
     description: str
     input_hint: str | None = None
+    input_schema: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

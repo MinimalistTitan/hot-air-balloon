@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.modules.assistant.tool_gateway.domain import (
     SideEffectType,
@@ -42,12 +43,30 @@ TOOL_DESCRIPTION = (
 class WriteWorkOrderStatusInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    work_order_code: str = Field(
+    work_order_id: UUID | None = Field(
+        default=None,
+        description="Unique UUID of the work order",
+    )
+
+    work_order_code: str | None = Field(
+        default=None,
         min_length=1,
         max_length=100,
         description="Business code of the work order, not its UUID",
     )
-    target_status: WorkOrderStatus = Field(description="Status to move the work order to")
+
+    target_status: WorkOrderStatus = Field(
+        validation_alias=AliasChoices("target_status", "status"),
+        description="Status to move the work order to"
+    )
+
+    site_code: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
+        description="Used to disambiguate duplicate work-order codes",
+    )
+
     reason: str | None = Field(
         default=None,
         min_length=1,
@@ -61,7 +80,8 @@ class WriteWorkOrderStatusOutput(BaseModel):
 
     tool_name: str = TOOL_NAME
     succeeded: bool
-    work_order_code: str
+    work_order_id: UUID | None = None
+    work_order_code: str | None = None
     previous_status: str | None = None
     current_status: str | None = None
     changed: bool = False
@@ -73,7 +93,7 @@ class WriteWorkOrderStatusOutput(BaseModel):
 
 def _rejection(
     *,
-    work_order_code: str,
+    work_order_code: str | None = None,
     error: DomainError,
     current: WorkOrderStatus | None,
 ) -> WriteWorkOrderStatusOutput:
@@ -101,6 +121,7 @@ def build_write_work_order_status_tool(
         try:
             result = await use_case.execute(
                 ChangeWorkOrderStatusCommand(
+                    work_order_id=data.work_order_id,
                     work_order_code=data.work_order_code,
                     target_status=data.target_status,
                     reason=data.reason,

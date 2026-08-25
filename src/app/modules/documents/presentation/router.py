@@ -13,15 +13,17 @@ from fastapi import (
 )
 
 from app.container import get_container
-from app.modules.documents.presentation.schemas import UploadDocumentResponse
 from app.modules.documents.application.commands import UploadDocumentCommand
 from app.modules.documents.domain.errors import (
     DocumentTooLargeError,
     DocumentUnsupportedContentTypeError,
 )
+from app.modules.documents.presentation.schemas import UploadDocumentResponse
 from app.modules.documents.wiring import DocumentsModule
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
 def get_documents_module(request: Request) -> DocumentsModule:
     module = get_container(request).documents
 
@@ -61,13 +63,12 @@ async def upload_document(
 ) -> UploadDocumentResponse:
     del source  # reserved for future metadata persistence
     content_type = file.content_type or "application/octet-stream"
-   
 
     if content_type not in module.upload_policy.allowed_content_types:
         raise DocumentUnsupportedContentTypeError("unsupported content type")
 
     payload = await read_limited_upload(file, module.upload_policy.max_bytes)
-    
+
     result = await module.upload_document.execute(
         UploadDocumentCommand(
             original_filename=file.filename or "uploaded-file",
@@ -77,5 +78,5 @@ async def upload_document(
             idempotency_key=idempotency_key,
         )
     )
-     
+
     return UploadDocumentResponse.model_validate(result)

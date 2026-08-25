@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from uuid import UUID
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -21,8 +21,9 @@ from app.modules.operations.domain.manufacturing_maintenance.work_order_status i
 
 @dataclass(frozen=True, slots=True)
 class ChangeWorkOrderStatusCommand:
-    work_order_code: str
     target_status: WorkOrderStatus
+    work_order_code: str | None = None
+    work_order_id: UUID | None = None
     reason: str | None = None
 
 

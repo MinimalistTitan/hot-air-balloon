@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from uuid import UUID
 
 import structlog
 from fastapi import FastAPI
@@ -14,21 +15,23 @@ from app.container import Container
 from app.core.config import Settings, get_settings
 from app.core.logging.logging import configure_logging
 from app.core.observability.observability import RequestContextMiddleware, metrics_response
+from app.modules.user.domain.authorization import AuthorizationContext, RoleName
+from app.utilities.local_auth import LocalAuthorizationMiddleware
 
 
 def create_app(
-        settings: Settings | None = None, 
+        settings: Settings | None = None,
         engine: AsyncEngine | None = None
     ) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings)
-    
+
     container = Container.build(app_settings, engine)
     logger = structlog.get_logger("application")
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
-        
+
         try:
             await container.start()
 
@@ -48,7 +51,7 @@ def create_app(
             )
 
     docs_url = "/docs" if app_settings.docs_enabled else None
-    
+
     application = FastAPI(
         title=app_settings.service_name,
         version=__version__,
@@ -63,6 +66,18 @@ def create_app(
         TrustedHostMiddleware,
         allowed_hosts=app_settings.trusted_hosts,
     )
+
+    if app_settings.local_auth_bypass_enabled:
+        application.add_middleware(
+            LocalAuthorizationMiddleware,
+            authorization_context=AuthorizationContext(
+                user_id=UUID("00000000-0000-0000-0000-000000000001"),
+                roles=frozenset({RoleName.READ_ONLY_ANALYST}),
+                site_codes=frozenset({"LOCAL"}),
+                global_scope=False,
+            ),
+        )
+
     if app_settings.cors_origins:
         application.add_middleware(
             CORSMiddleware,

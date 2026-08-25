@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.core.config import Settings
 from app.core.database.database import SessionFactory, create_engine, create_session_factory
 from app.core.life_cycle import ManagedResource
+from app.modules.assistant.application.facts.act_policy import FactAcceptancePolicy
 from app.modules.assistant.application.ports import (
     AgentOrchestratorPort,
     AssistantTelemetryPort,
@@ -20,11 +21,17 @@ from app.modules.assistant.domain.tool_call import ToolCallPolicy
 from app.modules.assistant.infrastructure.agents.langgraph.postgres_checkpointer import (
     PostgresCheckpointer,
 )
+from app.modules.assistant.infrastructure.conversation_memory.long_term.candidate_repository import (
+    FactCandidateRepository,
+)
 from app.modules.assistant.infrastructure.conversation_memory.long_term.consolidation_worker import (
     ConsolidationWorker,
 )
-from app.modules.assistant.infrastructure.conversation_memory.long_term.llm_summarizer import (
-    LlmSummarizer,
+from app.modules.assistant.infrastructure.conversation_memory.long_term.fact_extractor import (
+    LlmFactExtractor,
+)
+from app.modules.assistant.infrastructure.conversation_memory.long_term.fact_promoter import (
+    FactPromoter,
 )
 from app.modules.assistant.infrastructure.conversation_memory.long_term.memory_record_repository import (
     MemoryRecordRepository,
@@ -63,7 +70,7 @@ class Container:
     session_factory: SessionFactory
     users: UsersModule
     assistant: AssistantModule | None
-   # langchain_smoke_check: LangChainSmokeCheck | None
+    # langchain_smoke_check: LangChainSmokeCheck | None
     documents: DocumentsModule | None
     operations: OperationsModule | None
 
@@ -147,6 +154,7 @@ class Container:
                 session_factory=session_factory,
                 retention_days=settings.short_term_retention_days,
                 assistant_conversation_retention_days=settings.assistant_conversation_retention_days,
+                purge_interval_seconds=(settings.short_term_retention_interval_seconds)
             )
         )
         if settings.long_term_memory_enabled:
@@ -194,19 +202,31 @@ class Container:
                 resources.append(
                     ConsolidationWorker(
                         session_factory=session_factory,
-                        summarizer=LlmSummarizer(llm=LangChainChatModelFactory(settings).build()),
-                        memory_store=MemoryRecordRepository(
+                        fact_extractor=LlmFactExtractor(
+                            llm=LangChainChatModelFactory(settings).build()
+                        ),
+                        fact_policy=FactAcceptancePolicy(
+                            max_statement_characters=settings.fact_max_statement_characters,
+                            rederivable_terms=assistant.rederivable_terms
+                            if assistant is not None
+                            else frozenset(),
+                        ),
+                        candidate_store=FactCandidateRepository(
                             session_factory=session_factory,
-                            embedding_model=settings.embedding_model,
-                            user_memory_namespace=settings.pinecone_user_memory_namespace,
-                            documents_namespace=settings.pinecone_documents_namespace,
+                            retention_days=settings.fact_candidate_retention_days,
+                        ),
+                        fact_promoter=FactPromoter(
+                            memory_store=MemoryRecordRepository(
+                                session_factory=session_factory,
+                                embedding_model=settings.embedding_model,
+                                user_memory_namespace=settings.pinecone_user_memory_namespace,
+                                documents_namespace=settings.pinecone_documents_namespace,
+                            )
                         ),
                         tool_permissions_by_name={
-                            tool.name: tool.required_permission.value
-                            for tool in assistant_tools
+                            tool.name: tool.required_permission.value for tool in assistant_tools
                         },
                         idle_minutes=settings.consolidation_idle_minutes,
-                        summary_retention_days=settings.summary_retention_days,
                     )
                 )
         if documents is not None:

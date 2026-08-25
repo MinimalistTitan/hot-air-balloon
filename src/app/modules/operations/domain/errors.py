@@ -10,7 +10,7 @@ from app.shared.domain.errors import DomainError
 class WorkOrderNotFoundError(DomainError):
     code = "work_order_not_found"
 
-    def __init__(self, work_order_code: str) -> None:
+    def __init__(self, work_order_code: str | None = None) -> None:
         super().__init__(f"work order not found: {work_order_code}")
         self.work_order_code = work_order_code
 
