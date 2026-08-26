@@ -32,7 +32,7 @@ ACTOR_TWO_ID = UUID("22222222-2222-2222-2222-222222222222")
 class ReadWorkOrdersInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    site_code: str
+    site_code: str | None = None
 
 
 class ReadWorkOrdersOutput(BaseModel):
@@ -108,11 +108,17 @@ def build_gateway(
     )
 
 
-def authorization_context(user_id: UUID) -> AuthorizationContext:
+def authorization_context(
+    user_id: UUID,
+    *,
+    site_codes: frozenset[str] = frozenset({"HN-01"}),
+    global_scope: bool = False,
+) -> AuthorizationContext:
     return AuthorizationContext(
         user_id=user_id,
         roles=frozenset({RoleName.MAINTENANCE_TECHNICIAN}),
-        site_codes=frozenset({"HN-01"}),
+        site_codes=site_codes,
+        global_scope=global_scope,
     )
 
 
@@ -209,3 +215,92 @@ async def test_gateway_denies_cross_site_call_before_handler_execution() -> None
     assert handler.calls == []
     assert audit_sink.records[-1].decision == ToolApprovalDecision.REJECTED
     assert trace_sink.events[-1].event == "permission_denied"
+
+
+async def test_gateway_injects_single_authorized_site_when_payload_omits_it() -> None:
+    handler = HandlerSpy()
+    audit_sink = RecordingAuditSink()
+    gateway = build_gateway(
+        handler,
+        FakeClock(),
+        audit_sink,
+        RecordingTraceSink(),
+    )
+
+    result = await gateway.invoke(
+        tool_name="read_work_orders",
+        payload={},
+        authorization_context=authorization_context(ACTOR_ONE_ID),
+    )
+
+    assert result["status"] == ToolExecutionStatus.SUCCESS.value
+    assert handler.calls == [{"site_code": "HN-01"}]
+    assert audit_sink.records[-1].payload == {"site_code": "HN-01"}
+
+
+async def test_gateway_requires_site_when_actor_has_multiple_authorized_sites() -> None:
+    handler = HandlerSpy()
+    audit_sink = RecordingAuditSink()
+    trace_sink = RecordingTraceSink()
+    gateway = build_gateway(handler, FakeClock(), audit_sink, trace_sink)
+
+    with pytest.raises(PermissionError, match="tool site scope not allowed"):
+        await gateway.invoke(
+            tool_name="read_work_orders",
+            payload={},
+            authorization_context=authorization_context(
+                ACTOR_ONE_ID,
+                site_codes=frozenset({"HN-01", "HN-02"}),
+            ),
+        )
+
+    assert handler.calls == []
+    assert audit_sink.records[-1].decision == ToolApprovalDecision.REJECTED
+    assert audit_sink.records[-1].reason == (
+        "site scope required: actor has multiple authorized sites"
+    )
+    assert trace_sink.events[-1].event == "site_scope_denied"
+
+
+async def test_gateway_denies_omitted_site_when_actor_has_no_authorized_sites() -> None:
+    handler = HandlerSpy()
+    audit_sink = RecordingAuditSink()
+    trace_sink = RecordingTraceSink()
+    gateway = build_gateway(handler, FakeClock(), audit_sink, trace_sink)
+
+    with pytest.raises(PermissionError, match="tool site scope not allowed"):
+        await gateway.invoke(
+            tool_name="read_work_orders",
+            payload={},
+            authorization_context=authorization_context(
+                ACTOR_ONE_ID,
+                site_codes=frozenset(),
+            ),
+        )
+
+    assert handler.calls == []
+    assert audit_sink.records[-1].reason == ("site scope required: actor has no authorized sites")
+    assert trace_sink.events[-1].event == "site_scope_denied"
+
+
+async def test_gateway_allows_global_actor_to_omit_site_scope() -> None:
+    handler = HandlerSpy()
+    gateway = build_gateway(
+        handler,
+        FakeClock(),
+        RecordingAuditSink(),
+        RecordingTraceSink(),
+    )
+
+    result = await gateway.invoke(
+        tool_name="read_work_orders",
+        payload={},
+        authorization_context=authorization_context(
+            ACTOR_ONE_ID,
+            site_codes=frozenset(),
+            global_scope=True,
+        ),
+    )
+
+    assert result["status"] == ToolExecutionStatus.SUCCESS.value
+    assert handler.calls == [{"site_code": None}]

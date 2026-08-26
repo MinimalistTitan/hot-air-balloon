@@ -46,17 +46,14 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
         allow_tool_calls: bool,
     ) -> AgentRunResult:
         effective_max_tool_calls = (
-            min(max(max_tool_calls, 0), tool_policy.max_total_calls)
-            if allow_tool_calls
-            else 0
+            min(max(max_tool_calls, 0), tool_policy.max_total_calls) if allow_tool_calls else 0
         )
         allowed_tools = [
-            tool
-            for tool in available_tools
-            if tool.name in tool_policy.allowed_tool_names
+            tool for tool in available_tools if tool.name in tool_policy.allowed_tool_names
         ]
         initial_state: GraphState = {
             "user_query": user_query,
+            "context_prompt": context.render(),
             "available_tools": allowed_tools,
             "conversation_history": [],
             "intent": "",
@@ -68,7 +65,6 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
             "remaining_tool_calls": effective_max_tool_calls,
             "max_calls_per_tool": tool_policy.max_calls_per_tool,
             "next_step": "respond",
-            #"answer": context.render(),
             "answer": "",
             "finish_reason": None,
         }

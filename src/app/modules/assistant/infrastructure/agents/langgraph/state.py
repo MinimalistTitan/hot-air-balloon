@@ -1,4 +1,4 @@
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from app.modules.assistant.application.ports import ConversationTurn
 from app.modules.assistant.domain.entities import ToolCallRecord, ToolDescriptor
@@ -9,10 +9,14 @@ class PlannedAction(TypedDict):
     action: Literal["respond", "tool_call"]
     tool_name: str
     payload: dict[str, object]
+    intent: NotRequired[str]
+    confidence: NotRequired[float]
+    rationale: NotRequired[str]
 
 
 class GraphState(TypedDict):
     user_query: str
+    context_prompt: str
     available_tools: list[ToolDescriptor]
     conversation_history: list[ConversationTurn]
     intent: str

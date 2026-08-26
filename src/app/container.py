@@ -131,8 +131,8 @@ class Container:
             session_factory=session_factory,
         )
 
-        assistant_tools = (*users.tools, *operations.tools, *operations.write_tools)
-
+        #assistant_tools = (*users.tools, *operations.tools, *operations.write_tools)
+        assistant_tools = (*users.tools, *operations.tools)
         assistant = build_assistant_module(
             settings=settings,
             tools=assistant_tools,

@@ -31,7 +31,10 @@ from app.shared.domain.errors import DomainError
 TOOL_NAME = "write_work_order_status"
 
 TOOL_DESCRIPTION = (
-    "Change the status of an existing work order. Mutating and approval-gated. "
+    "Change one existing work order's status only when the user explicitly requests that exact "
+    "mutation and supplies a work_order_code or work_order_id plus target_status. Never use for "
+    "definitions, explanations, listing, filtering, or inferred/proactive status changes. "
+    "Mutating and approval-gated. "
     "Only these transitions are legal: pending -> open|cancelled, open -> in_progress|cancelled, "
     "in_progress -> open|completed|cancelled. completed and cancelled are terminal. "
     "A reason is mandatory when moving to completed or cancelled. "
@@ -57,7 +60,7 @@ class WriteWorkOrderStatusInput(BaseModel):
 
     target_status: WorkOrderStatus = Field(
         validation_alias=AliasChoices("target_status", "status"),
-        description="Status to move the work order to"
+        description="Status to move the work order to",
     )
 
     site_code: str | None = Field(

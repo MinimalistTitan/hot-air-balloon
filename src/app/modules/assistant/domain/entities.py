@@ -9,6 +9,8 @@ class ToolDescriptor:
     description: str
     input_hint: str | None = None
     input_schema: dict[str, object] = field(default_factory=dict)
+    site_code_field: str | None = None
+    is_mutating: bool = False
 
 
 @dataclass(frozen=True, slots=True)

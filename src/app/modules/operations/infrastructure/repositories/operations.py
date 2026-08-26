@@ -3,8 +3,8 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.modules.operations.infrastructure.manufacturing_maintenance.models import (
     AssetRecord,
@@ -41,7 +41,7 @@ class OperationsRepository:
                 site_code=site_code,
             )
 
-        query = select(WorkOrderRecord)
+        query = select(WorkOrderRecord).options(selectinload(WorkOrderRecord.site))
 
         if site_code is not None:
             query = query.join(SiteRecord, WorkOrderRecord.site_id == SiteRecord.id).where(
@@ -58,6 +58,7 @@ class OperationsRepository:
             {
                 "id": str(row.id),
                 "site_id": str(row.site_id),
+                "site_code": row.site.code,
                 "asset_id": str(row.asset_id),
                 "code": row.code,
                 "title": row.title,
@@ -113,8 +114,13 @@ class OperationsRepository:
         site_code: str | None = None,
         limit: int = 10,
     ) -> list[dict[str, object]]:
-        query = select(WorkOrderRecord).options(selectinload(WorkOrderRecord.asset)).where(
-            WorkOrderRecord.status.in_(["open", "in_progress", "pending"])
+        query = (
+            select(WorkOrderRecord)
+            .options(
+                selectinload(WorkOrderRecord.asset),
+                selectinload(WorkOrderRecord.site),
+            )
+            .where(WorkOrderRecord.status.in_(["open", "in_progress", "pending"]))
         )
 
         if site_code is not None:
@@ -131,6 +137,7 @@ class OperationsRepository:
         return [
             {
                 "ticket_id": str(row.id),
+                "site_code": row.site.code,
                 "code": row.code,
                 "title": row.title,
                 "asset_code": row.asset.code if row.asset else None,
@@ -148,7 +155,7 @@ class OperationsRepository:
         site_code: str | None = None,
         limit: int = 10,
     ) -> list[dict[str, object]]:
-        query = select(SparePartRecord)
+        query = select(SparePartRecord).options(selectinload(SparePartRecord.site))
 
         if site_code is not None:
             query = query.join(SiteRecord, SparePartRecord.site_id == SiteRecord.id).where(
@@ -161,6 +168,7 @@ class OperationsRepository:
         return [
             {
                 "part_id": str(row.id),
+                "site_code": row.site.code,
                 "code": row.code,
                 "name": row.name,
                 "uom": row.uom,
@@ -178,8 +186,13 @@ class OperationsRepository:
         site_code: str | None = None,
         limit: int = 10,
     ) -> list[dict[str, object]]:
-        query = select(WorkOrderRecord).options(selectinload(WorkOrderRecord.asset)).where(
-            WorkOrderRecord.due_at.isnot(None)
+        query = (
+            select(WorkOrderRecord)
+            .options(
+                selectinload(WorkOrderRecord.asset),
+                selectinload(WorkOrderRecord.site),
+            )
+            .where(WorkOrderRecord.due_at.isnot(None))
         )
 
         if site_code is not None:
@@ -193,6 +206,7 @@ class OperationsRepository:
         return [
             {
                 "id": str(row.id),
+                "site_code": row.site.code,
                 "code": row.code,
                 "title": row.title,
                 "asset_code": row.asset.code if row.asset else None,

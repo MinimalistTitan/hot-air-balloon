@@ -6,17 +6,53 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.assistant.tool_gateway.domain import ToolDefinition, ToolRateLimit
+from app.modules.operations.domain.manufacturing_maintenance.work_order_status import (
+    WorkOrderStatus,
+)
 from app.modules.operations.infrastructure.repositories.operations import OperationsRepository
 from app.modules.user.domain.authorization import Permission
 
 READ_TOOL_RATE_LIMIT = ToolRateLimit(max_calls=30, window_seconds=60)
 
+GET_WORK_ORDERS_DESCRIPTION = (
+    "List existing ERP work orders, optionally filtered by exact site_code and status, with a "
+    "maximum limit of 1-100. Use for requests such as 'show open work orders at PLANT-HCM'. "
+    "Do not use for due-soonest or production-schedule requests, maintenance-ticket queues, "
+    "definitions, status changes, or lookup by one exact work-order code/UUID. Read-only."
+)
+GET_ASSET_STATUS_DESCRIPTION = (
+    "List current ERP asset status and criticality, optionally for one exact site_code. Use only "
+    "for asset condition/status requests. Do not use for work orders, maintenance tickets, spare "
+    "parts, production schedules, explanations, or any mutation. Read-only."
+)
+GET_MAINTENANCE_TICKETS_DESCRIPTION = (
+    "List maintenance tickets whose status is pending, open, or in_progress, optionally filtered "
+    "by exact site_code and limited to 1-100 rows. Use for maintenance-ticket queue requests. "
+    "Do not use for all work orders, due-date schedules, asset status, definitions, or changes. "
+    "Read-only."
+)
+GET_SPARE_PARTS_AVAILABILITY_DESCRIPTION = (
+    "List ERP spare-part stock, reorder levels, and below-reorder indicators, optionally filtered "
+    "by exact site_code and limited to 1-100 rows. Use only for parts availability or inventory "
+    "requests. Do not use for work orders, assets, schedules, explanations, or stock mutations. "
+    "Read-only."
+)
+GET_PRODUCTION_SCHEDULE_DESCRIPTION = (
+    "List due-dated work orders ordered by earliest due_at, optionally filtered by exact "
+    "site_code and limited to 1-100 rows. Use for due-soonest, upcoming, deadline, or production "
+    "schedule requests. Do not use for generic open-work-order lists, maintenance tickets, "
+    "definitions, or status changes. Read-only."
+)
+
 
 class GetWorkOrdersInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    site_code: str | None = Field(default=None, description="Filter by site code")
-    status: str | None = Field(default=None, description="Filter by work order status")
+    site_code: str | None = Field(default=None, description="Exact ERP site code from the request")
+    status: WorkOrderStatus | None = Field(
+        default=None,
+        description="Exact requested status: pending, open, in_progress, completed, or cancelled",
+    )
     limit: int = Field(default=10, ge=1, le=100)
 
 
@@ -25,6 +61,7 @@ class WorkOrderItem(BaseModel):
 
     id: str
     site_id: str
+    site_code: str
     asset_id: str
     code: str
     title: str
@@ -47,7 +84,7 @@ class GetWorkOrdersOutput(BaseModel):
 class GetAssetStatusInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    site_code: str | None = Field(default=None, description="Filter by site code")
+    site_code: str | None = Field(default=None, description="Exact ERP site code from the request")
 
 
 class AssetStatusItem(BaseModel):
@@ -72,7 +109,7 @@ class GetAssetStatusOutput(BaseModel):
 class GetMaintenanceTicketsInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    site_code: str | None = Field(default=None, description="Filter by site code")
+    site_code: str | None = Field(default=None, description="Exact ERP site code from the request")
     limit: int = Field(default=10, ge=1, le=100)
 
 
@@ -80,6 +117,7 @@ class MaintenanceTicketItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ticket_id: str
+    site_code: str
     code: str
     title: str
     asset_code: str | None
@@ -99,7 +137,7 @@ class GetMaintenanceTicketsOutput(BaseModel):
 class GetSparePartsAvailabilityInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    site_code: str | None = Field(default=None, description="Filter by site code")
+    site_code: str | None = Field(default=None, description="Exact ERP site code from the request")
     limit: int = Field(default=10, ge=1, le=100)
 
 
@@ -107,6 +145,7 @@ class SparePartItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     part_id: str
+    site_code: str
     code: str
     name: str
     uom: str
@@ -126,7 +165,7 @@ class GetSparePartsAvailabilityOutput(BaseModel):
 class GetProductionScheduleInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    site_code: str | None = Field(default=None, description="Filter by site code")
+    site_code: str | None = Field(default=None, description="Exact ERP site code from the request")
     limit: int = Field(default=10, ge=1, le=100)
 
 
@@ -134,6 +173,7 @@ class ProductionScheduleItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
+    site_code: str
     code: str
     title: str
     asset_code: str | None
@@ -158,7 +198,7 @@ def build_get_work_orders_tool(
         repository = repository_factory()
         work_orders = await repository.list_work_orders(
             site_code=data.site_code,
-            status=data.status,
+            status=data.status.value if data.status is not None else None,
             limit=data.limit,
         )
         output = GetWorkOrdersOutput(
@@ -168,7 +208,7 @@ def build_get_work_orders_tool(
 
     return ToolDefinition(
         name="get_work_orders",
-        description="Retrieve work orders with optional filtering by site and status",
+        description=GET_WORK_ORDERS_DESCRIPTION,
         input_model=GetWorkOrdersInput,
         output_model=GetWorkOrdersOutput,
         handler=invoke,
@@ -192,7 +232,7 @@ def build_get_asset_status_tool(
 
     return ToolDefinition(
         name="get_asset_status",
-        description="Get current status and criticality of all assets",
+        description=GET_ASSET_STATUS_DESCRIPTION,
         input_model=GetAssetStatusInput,
         output_model=GetAssetStatusOutput,
         handler=invoke,
@@ -219,7 +259,7 @@ def build_get_maintenance_tickets_tool(
 
     return ToolDefinition(
         name="get_maintenance_tickets",
-        description="Retrieve open and in-progress maintenance tickets",
+        description=GET_MAINTENANCE_TICKETS_DESCRIPTION,
         input_model=GetMaintenanceTicketsInput,
         output_model=GetMaintenanceTicketsOutput,
         handler=invoke,
@@ -246,7 +286,7 @@ def build_get_spare_parts_availability_tool(
 
     return ToolDefinition(
         name="get_spare_parts_availability",
-        description="Check spare parts availability and stock levels",
+        description=GET_SPARE_PARTS_AVAILABILITY_DESCRIPTION,
         input_model=GetSparePartsAvailabilityInput,
         output_model=GetSparePartsAvailabilityOutput,
         handler=invoke,
@@ -273,7 +313,7 @@ def build_get_production_schedule_tool(
 
     return ToolDefinition(
         name="get_production_schedule",
-        description="Get production schedule with work orders and due dates",
+        description=GET_PRODUCTION_SCHEDULE_DESCRIPTION,
         input_model=GetProductionScheduleInput,
         output_model=GetProductionScheduleOutput,
         handler=invoke,

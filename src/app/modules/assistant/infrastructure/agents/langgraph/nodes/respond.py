@@ -5,14 +5,17 @@ from langgraph.runtime import Runtime
 
 
 async def respond(
-	state: GraphState,
-	runtime: Runtime[GraphContext],
+    state: GraphState,
+    runtime: Runtime[GraphContext],
 ) -> dict[str, object]:
-	if state["finish_reason"] is not None:
-		return {}
+    # A terminal answer already set upstream (e.g. a policy block) is
+    # authoritative; keep it instead of generating a new one.
+    if state["finish_reason"] is not None and state["answer"]:
+        return {}
 
-	answer = await runtime.context.brain.respond(state)
-	return {
-		"answer": answer.strip() or "No answer generated.",
-		"finish_reason": OrchestrationFinishReason.COMPLETED,
-	}
+    answer = await runtime.context.brain.respond(state)
+    update: dict[str, object] = {"answer": answer.strip() or "No answer generated."}
+    # Preserve an existing terminal reason instead of masking it as completed.
+    if state["finish_reason"] is None:
+        update["finish_reason"] = OrchestrationFinishReason.COMPLETED
+    return update

@@ -58,7 +58,10 @@ class ContextAssemblerPort(Protocol):
 
 
 class ToolRuntimePort(Protocol):
-    async def list_tools(self) -> list[ToolDescriptor]: ...
+    async def list_tools(
+        self,
+        authorization_context: AuthorizationContext,
+    ) -> list[ToolDescriptor]: ...
     async def invoke(
         self,
         tool_name: str,

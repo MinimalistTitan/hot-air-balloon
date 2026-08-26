@@ -52,7 +52,7 @@ class OrchestrateAssistantQuery:
         )
 
         try:
-            tools = await self.tool_runtime.list_tools()
+            tools = await self.tool_runtime.list_tools(command.authorization_context)
 
             run = await self.agent_orchestrator.run(
                 conversation_id=conversation_id,

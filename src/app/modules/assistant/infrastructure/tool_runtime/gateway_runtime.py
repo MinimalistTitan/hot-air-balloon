@@ -26,10 +26,25 @@ class GatewayToolRuntime(ToolRuntimePort):
         if self.rate_limiter is None:
             self.rate_limiter = FixedWindowRateLimiter()
 
-    async def list_tools(self) -> list[ToolDescriptor]:
+    async def list_tools(
+        self,
+        authorization_context: AuthorizationContext,
+    ) -> list[ToolDescriptor]:
         return [
-            ToolDescriptor(name=tool.name, description=tool.description, input_schema=tool.input_model.model_json_schema())
+            ToolDescriptor(
+                name=tool.name,
+                description=tool.description,
+                input_schema=tool.input_model.model_json_schema(),
+                site_code_field=tool.site_code_field,
+                is_mutating=tool.side_effect_type.value == "write",
+            )
             for tool in self.registry.list_tools()
+            if authorization_context.can(tool.required_permission)
+            and (
+                tool.site_code_field is None
+                or authorization_context.global_scope
+                or bool(authorization_context.site_codes)
+            )
         ]
 
     async def invoke(

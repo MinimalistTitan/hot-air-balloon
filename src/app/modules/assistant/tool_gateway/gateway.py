@@ -54,7 +54,42 @@ class ToolGateway:
         if tool is None:
             raise KeyError(f"unknown tool: {tool_name}")
 
-        validated = validate_strict_input(tool.input_model, payload)
+        actor = str(authorization_context.user_id)
+        scoped_payload = dict(payload)
+        if tool.site_code_field is not None and not authorization_context.global_scope:
+            requested_site = scoped_payload.get(tool.site_code_field)
+            if requested_site is None:
+                authorized_sites = authorization_context.site_codes
+                if len(authorized_sites) == 1:
+                    scoped_payload[tool.site_code_field] = next(iter(authorized_sites))
+                else:
+                    site_scope_reason = (
+                        "site scope required: actor has no authorized sites"
+                        if not authorized_sites
+                        else "site scope required: actor has multiple authorized sites"
+                    )
+                    await self._audit_sink.write(
+                        ToolAuditRecord(
+                            tool_name=tool.name,
+                            actor=actor,
+                            payload=scoped_payload,
+                            decision=ToolApprovalDecision.REJECTED,
+                            conversation_id=conversation_id,
+                            reason=site_scope_reason,
+                        )
+                    )
+                    await self._trace_sink.append(
+                        ToolTraceEvent(
+                            tool_name=tool.name,
+                            actor=actor,
+                            conversation_id=conversation_id,
+                            event="site_scope_denied",
+                            payload={"reason": site_scope_reason},
+                        )
+                    )
+                    raise PermissionError(f"tool site scope not allowed: {tool_name}")
+
+        validated = validate_strict_input(tool.input_model, scoped_payload)
         validated_payload = validated.model_dump(mode="json")
         site_code: str | None = None
         if tool.site_code_field is not None:
@@ -63,7 +98,6 @@ class ToolGateway:
                 raise TypeError(f"{tool.site_code_field} must be a string when present")
             site_code = site_code_value
 
-        actor = str(authorization_context.user_id)
         allowed = await self._permission_checker.can_call(
             authorization_context,
             tool.required_permission,
@@ -192,5 +226,6 @@ class ToolGateway:
         return {
             "status": ToolExecutionStatus.SUCCESS.value,
             "tool_name": tool.name,
+            "applied_payload": validated_payload,
             "result": result,
         }

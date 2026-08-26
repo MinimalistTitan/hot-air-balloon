@@ -61,7 +61,12 @@ def build_web_search_tool(provider: WebSearchPort) -> ToolDefinition:
 
     return ToolDefinition(
         name="web_search",
-        description="Search public web sources for current information",
+        description=(
+            "Search public web sources when the user needs current or externally verifiable "
+            "information. Use query for grounded public search terms and max_results from 1-10. "
+            "Do not use for internal ERP work orders, assets, tickets, spare parts, schedules, "
+            "user-table audits, or questions answerable from supplied context. Read-only."
+        ),
         input_model=WebSearchToolInput,
         output_model=WebSearchToolOutput,
         handler=invoke,

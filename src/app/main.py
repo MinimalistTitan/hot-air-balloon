@@ -73,8 +73,8 @@ def create_app(
             authorization_context=AuthorizationContext(
                 user_id=UUID("00000000-0000-0000-0000-000000000001"),
                 roles=frozenset({RoleName.READ_ONLY_ANALYST}),
-                site_codes=frozenset({"LOCAL"}),
-                global_scope=False,
+                # site_codes=frozenset({"LOCAL"}),
+                global_scope=True,
             ),
         )
 
