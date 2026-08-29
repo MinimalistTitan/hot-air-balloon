@@ -18,7 +18,7 @@ class WorkOrderStatusSnapshot:
 
 
 class WorkOrderStatusStore(Protocol):
-    async def find_status_by_code(self, work_order_code: str | None = None) -> WorkOrderStatusSnapshot | None: ...
+    async def find_status_by_code(self, work_order_code: str, *, site_code: str | None = None) -> list[WorkOrderStatusSnapshot]: ...
 
     async def find_status_by_id(
             self,

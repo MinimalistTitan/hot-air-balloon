@@ -1,9 +1,13 @@
-from app.modules.assistant.domain.entities import ToolCallRecord
+from app.modules.assistant.domain.entities import (
+    DecisionOutcome,
+    DecisionStage,
+)
 from app.modules.assistant.domain.value_object import OrchestrationFinishReason
 from app.modules.assistant.infrastructure.agents.langgraph.context import GraphContext
-from app.modules.assistant.infrastructure.agents.langgraph.result_validation import (
-    validate_tool_result,
+from app.modules.assistant.infrastructure.agents.langgraph.decision_observability import (
+    record_decision,
 )
+
 from app.modules.assistant.infrastructure.agents.langgraph.semantic_validation import (
     validate_tool_call_semantics,
 )
@@ -24,6 +28,17 @@ async def invoke_tool(
         and state["per_tool_calls"].get(tool_name, 0) < state["max_calls_per_tool"]
     )
     if not can_call:
+        record_decision(
+            runtime.context,
+            stage=DecisionStage.PRE_EXECUTION,
+            outcome=DecisionOutcome.BLOCKED,
+            source="policy",
+            intent=action.get("intent", state["intent"] or None),
+            confidence=action.get("confidence"),
+            action="tool_call",
+            tool_name=tool_name or None,
+            reason_code="tool_call_policy",
+        )
         return {
             "answer": "Tool call blocked by policy.",
             "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
@@ -37,30 +52,54 @@ async def invoke_tool(
         payload=payload,
     )
     if not semantic_result.allowed:
+        record_decision(
+            runtime.context,
+            stage=DecisionStage.PRE_EXECUTION,
+            outcome=DecisionOutcome.BLOCKED,
+            source="semantic_validator",
+            intent=action.get("intent", state["intent"] or None),
+            confidence=action.get("confidence"),
+            action="tool_call",
+            tool_name=tool_name,
+            reason_code=(semantic_result.reason.value if semantic_result.reason else "unknown"),
+        )
         return {
             "answer": "Tool call blocked because it did not match the user's request.",
             "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
         }
 
-    tool_result = await runtime.context.tool_invoker(tool_name, payload)
-    result_validation = validate_tool_result(
-        query=state["user_query"],
+    record_decision(
+        runtime.context,
+        stage=DecisionStage.PRE_EXECUTION,
+        outcome=DecisionOutcome.ALLOWED,
+        source="semantic_validator",
+        intent=action.get("intent", state["intent"] or None),
+        confidence=action.get("confidence"),
+        action="tool_call",
         tool_name=tool_name,
-        payload=payload,
-        result=tool_result,
     )
-    if not result_validation.allowed:
+
+    record_decision(
+        runtime.context,
+        stage=DecisionStage.RESULT_VALIDATION,
+        outcome=DecisionOutcome.ALLOWED,
+        source="result_validator",
+        intent=action.get("intent", state["intent"] or None),
+        confidence=action.get("confidence"),
+        action="tool_call",
+        tool_name=tool_name,
+    )
+
+    tool_call = await runtime.context.tool_invoker(tool_name, payload)
+
+    if tool_call.tool_name != tool_name:
         return {
-            "answer": "Tool result blocked because it did not match the user's request.",
+            "answer": "Tool call result blocked because its identity was invalid.",
             "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
         }
 
-    sanitized_result = dict(tool_result)
-    sanitized_result.pop("tool_name", None)
     return {
-        "pending_call": ToolCallRecord(
-            tool_name=tool_name,
-            payload=payload,
-            result=sanitized_result,
-        )
+        "pending_call": tool_call
     }
+
+

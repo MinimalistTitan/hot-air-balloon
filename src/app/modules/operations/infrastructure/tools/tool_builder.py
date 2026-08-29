@@ -5,11 +5,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.assistant.tool_gateway.domain import ToolDefinition, ToolRateLimit
+from app.modules.assistant.tool_gateway.domain import AssistantToolRegistration, ToolDefinition, ToolRateLimit
 from app.modules.operations.domain.manufacturing_maintenance.work_order_status import (
     WorkOrderStatus,
 )
 from app.modules.operations.infrastructure.repositories.operations import OperationsRepository
+from app.modules.operations.infrastructure.tools.result_adapters import ASSETS_ADAPTER, MAINTENANCE_TICKETS_ADAPTER, PRODUCTION_SCHEDULE_ADAPTER, SPARE_PARTS_ADAPTER, WORK_ORDERS_ADAPTER
 from app.modules.user.domain.authorization import Permission
 
 READ_TOOL_RATE_LIMIT = ToolRateLimit(max_calls=30, window_seconds=60)
@@ -192,7 +193,7 @@ class GetProductionScheduleOutput(BaseModel):
 
 def build_get_work_orders_tool(
     repository_factory: Callable[[], OperationsRepository],
-) -> ToolDefinition:
+) -> AssistantToolRegistration:
     async def invoke(payload: dict[str, Any]) -> dict[str, Any]:
         data = GetWorkOrdersInput.model_validate(payload)
         repository = repository_factory()
@@ -206,21 +207,24 @@ def build_get_work_orders_tool(
         )
         return output.model_dump(mode="json")
 
-    return ToolDefinition(
-        name="get_work_orders",
-        description=GET_WORK_ORDERS_DESCRIPTION,
-        input_model=GetWorkOrdersInput,
-        output_model=GetWorkOrdersOutput,
-        handler=invoke,
-        required_permission=Permission.WORK_ORDERS_READ,
-        site_code_field="site_code",
-        rate_limit=READ_TOOL_RATE_LIMIT,
+    return AssistantToolRegistration(
+        definition=ToolDefinition(
+            name="get_work_orders",
+            description=GET_WORK_ORDERS_DESCRIPTION,
+            input_model=GetWorkOrdersInput,
+            output_model=GetWorkOrdersOutput,
+            handler=invoke,
+            required_permission=Permission.WORK_ORDERS_READ,
+            site_code_field="site_code",
+            rate_limit=READ_TOOL_RATE_LIMIT,
+        ),
+        result_adapter=WORK_ORDERS_ADAPTER,
     )
 
 
 def build_get_asset_status_tool(
     repository_factory: Callable[[], OperationsRepository],
-) -> ToolDefinition:
+) -> AssistantToolRegistration:
     async def invoke(payload: dict[str, Any]) -> dict[str, Any]:
         data = GetAssetStatusInput.model_validate(payload)
         repository = repository_factory()
@@ -230,21 +234,24 @@ def build_get_asset_status_tool(
         )
         return output.model_dump(mode="json")
 
-    return ToolDefinition(
-        name="get_asset_status",
-        description=GET_ASSET_STATUS_DESCRIPTION,
-        input_model=GetAssetStatusInput,
-        output_model=GetAssetStatusOutput,
-        handler=invoke,
-        required_permission=Permission.ASSETS_READ,
-        site_code_field="site_code",
-        rate_limit=READ_TOOL_RATE_LIMIT,
+    return AssistantToolRegistration(
+        definition=ToolDefinition(
+            name="get_asset_status",
+            description=GET_ASSET_STATUS_DESCRIPTION,
+            input_model=GetAssetStatusInput,
+            output_model=GetAssetStatusOutput,
+            handler=invoke,
+            required_permission=Permission.ASSETS_READ,
+            site_code_field="site_code",
+            rate_limit=READ_TOOL_RATE_LIMIT,
+        ),
+        result_adapter=ASSETS_ADAPTER,
     )
 
 
 def build_get_maintenance_tickets_tool(
     repository_factory: Callable[[], OperationsRepository],
-) -> ToolDefinition:
+) -> AssistantToolRegistration:
     async def invoke(payload: dict[str, Any]) -> dict[str, Any]:
         data = GetMaintenanceTicketsInput.model_validate(payload)
         repository = repository_factory()
@@ -257,21 +264,24 @@ def build_get_maintenance_tickets_tool(
         )
         return output.model_dump(mode="json")
 
-    return ToolDefinition(
-        name="get_maintenance_tickets",
-        description=GET_MAINTENANCE_TICKETS_DESCRIPTION,
-        input_model=GetMaintenanceTicketsInput,
-        output_model=GetMaintenanceTicketsOutput,
-        handler=invoke,
-        required_permission=Permission.MAINTENANCE_TICKETS_READ,
-        site_code_field="site_code",
-        rate_limit=READ_TOOL_RATE_LIMIT,
+    return AssistantToolRegistration(
+        definition=ToolDefinition(
+            name="get_maintenance_tickets",
+            description=GET_MAINTENANCE_TICKETS_DESCRIPTION,
+            input_model=GetMaintenanceTicketsInput,
+            output_model=GetMaintenanceTicketsOutput,
+            handler=invoke,
+            required_permission=Permission.MAINTENANCE_TICKETS_READ,
+            site_code_field="site_code",
+            rate_limit=READ_TOOL_RATE_LIMIT,
+        ),
+        result_adapter=MAINTENANCE_TICKETS_ADAPTER,
     )
 
 
 def build_get_spare_parts_availability_tool(
     repository_factory: Callable[[], OperationsRepository],
-) -> ToolDefinition:
+) -> AssistantToolRegistration:
     async def invoke(payload: dict[str, Any]) -> dict[str, Any]:
         data = GetSparePartsAvailabilityInput.model_validate(payload)
         repository = repository_factory()
@@ -284,21 +294,24 @@ def build_get_spare_parts_availability_tool(
         )
         return output.model_dump(mode="json")
 
-    return ToolDefinition(
-        name="get_spare_parts_availability",
-        description=GET_SPARE_PARTS_AVAILABILITY_DESCRIPTION,
-        input_model=GetSparePartsAvailabilityInput,
-        output_model=GetSparePartsAvailabilityOutput,
-        handler=invoke,
-        required_permission=Permission.SPARE_PARTS_READ,
-        site_code_field="site_code",
-        rate_limit=READ_TOOL_RATE_LIMIT,
+    return AssistantToolRegistration(
+        definition=ToolDefinition(
+            name="get_spare_parts_availability",
+            description=GET_SPARE_PARTS_AVAILABILITY_DESCRIPTION,
+            input_model=GetSparePartsAvailabilityInput,
+            output_model=GetSparePartsAvailabilityOutput,
+            handler=invoke,
+            required_permission=Permission.SPARE_PARTS_READ,
+            site_code_field="site_code",
+            rate_limit=READ_TOOL_RATE_LIMIT,
+        ),
+        result_adapter=SPARE_PARTS_ADAPTER,
     )
 
 
 def build_get_production_schedule_tool(
     repository_factory: Callable[[], OperationsRepository],
-) -> ToolDefinition:
+) -> AssistantToolRegistration:
     async def invoke(payload: dict[str, Any]) -> dict[str, Any]:
         data = GetProductionScheduleInput.model_validate(payload)
         repository = repository_factory()
@@ -311,13 +324,16 @@ def build_get_production_schedule_tool(
         )
         return output.model_dump(mode="json")
 
-    return ToolDefinition(
-        name="get_production_schedule",
-        description=GET_PRODUCTION_SCHEDULE_DESCRIPTION,
-        input_model=GetProductionScheduleInput,
-        output_model=GetProductionScheduleOutput,
-        handler=invoke,
-        required_permission=Permission.PRODUCTION_SCHEDULE_READ,
-        site_code_field="site_code",
-        rate_limit=READ_TOOL_RATE_LIMIT,
+    return AssistantToolRegistration(
+        definition=ToolDefinition(
+            name="get_production_schedule",
+            description=GET_PRODUCTION_SCHEDULE_DESCRIPTION,
+            input_model=GetProductionScheduleInput,
+            output_model=GetProductionScheduleOutput,
+            handler=invoke,
+            required_permission=Permission.PRODUCTION_SCHEDULE_READ,
+            site_code_field="site_code",
+            rate_limit=READ_TOOL_RATE_LIMIT,
+        ),
+        result_adapter=PRODUCTION_SCHEDULE_ADAPTER,
     )

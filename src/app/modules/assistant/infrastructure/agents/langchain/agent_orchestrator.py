@@ -11,7 +11,12 @@ from app.modules.assistant.application.ports import (
     ToolInvoker,
 )
 from app.modules.assistant.domain.context import AssembledContext
-from app.modules.assistant.domain.entities import AgentRunResult, ToolCallRecord, ToolDescriptor
+from app.modules.assistant.domain.entities import (
+    AgentRunResult,
+    ToolCallRecord,
+    ToolDescriptor,
+    ToolOutcomeStatus,
+)
 from app.modules.assistant.domain.tool_call import ToolCallBudgetState, ToolCallPolicy
 from app.modules.assistant.domain.value_object import OrchestrationFinishReason
 from app.modules.assistant.infrastructure.agents.structured_decision import (
@@ -92,7 +97,11 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
                     "system",
                     (
                         "You are an orchestration agent. "
-                        "Return a final answer using the supplied tool results. "
+                        "Answer the user's requested outcome using only facts in the supplied "
+                        "tool results. Never replace successful ERP results with a definition "
+                        "or unrelated explanation. For collection requests, state the actual "
+                        "count and enumerate only returned records. If fewer records were "
+                        "returned than requested, say so. Never invent missing records. "
                         "Do not request another tool call."
                     ),
                 ),
@@ -108,9 +117,13 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
             ]
         )
 
-        decision_chain = decision_prompt | self.llm.with_structured_output(AgentDecision)
+        decision_chain = decision_prompt | self.llm.with_structured_output(
+            AgentDecision,
+            method="function_calling",
+        )
         final_response_chain = final_response_prompt | self.llm.with_structured_output(
-            AgentFinalResponse
+            AgentFinalResponse,
+            method="function_calling",
         )
 
         history_json = json.dumps(
@@ -151,6 +164,8 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
                     model_name=self.llm.model_name,
                     finish_reason=OrchestrationFinishReason.COMPLETED,
                     tool_calls=tool_calls,
+                    # dummy evidence temporarily
+                    evidence=[],  # type: ignore
                 )
 
             raw_decision = await decision_chain.ainvoke(
@@ -179,6 +194,7 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
                     model_name=self.llm.model_name,
                     finish_reason=OrchestrationFinishReason.COMPLETED,
                     tool_calls=tool_calls,
+                    evidence=[],  # type: ignore
                 )
 
             if decision.confidence < MIN_TOOL_DECISION_CONFIDENCE:
@@ -188,6 +204,7 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
                     model_name=self.llm.model_name,
                     finish_reason=OrchestrationFinishReason.COMPLETED,
                     tool_calls=tool_calls,
+                    evidence=[],  # type: ignore
                 )
 
             tool_name, payload = decision.tool_call()
@@ -201,22 +218,20 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
                         model_name=self.llm.model_name,
                         finish_reason=OrchestrationFinishReason.POLICY_BLOCKED,
                         tool_calls=tool_calls,
+                        evidence=[],  # type: ignore
                     )
                 continue
 
-            tool_result = await tool_invoker(tool_name, payload)
             budget.mark_called(tool_name)
-
-            # Keep tool_name in the trace wrapper, but remove its duplicate
-            # from the nested result.
-            sanitized_result = dict(tool_result)
-            sanitized_result.pop("tool_name", None)
 
             tool_calls.append(
                 ToolCallRecord(
                     tool_name=tool_name,
                     payload=dict(payload),
-                    result=sanitized_result,
+                    result={},
+                    # temporarily dummy status and evidence
+                    status=ToolOutcomeStatus.SUCCESS,
+                    evidence=[],  # type: ignore
                 )
             )
 
@@ -224,7 +239,7 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
                 {
                     "tool_name": tool_name,
                     "payload": payload,
-                    "result": sanitized_result,
+                    "result": {},
                 }
             )
 
@@ -234,4 +249,5 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
             model_name=self.llm.model_name,
             finish_reason=OrchestrationFinishReason.TOOL_LIMIT_REACHED,
             tool_calls=tool_calls,
+            evidence=[],  # type: ignore
         )

@@ -75,4 +75,10 @@ class AgentDecision(BaseModel):
 class AgentFinalResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    final_answer: str
+    final_answer: str = Field(
+        min_length=1,
+        description=(
+            "Concise answer to the user's requested outcome, grounded only in supplied tool "
+            "results and conversation context."
+        ),
+    )

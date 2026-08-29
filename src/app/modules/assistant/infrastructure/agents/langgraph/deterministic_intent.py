@@ -35,7 +35,34 @@ _SITE_PATTERN = re.compile(
     r"\b(?:at|for|in|site)\s+(?:site\s+)?([a-z0-9]+(?:-[a-z0-9]+)+)\b",
     re.IGNORECASE,
 )
-_LIMIT_PATTERN = re.compile(r"\b(?:top|first|limit(?:ed\s+to)?)\s+(\d+)\b", re.IGNORECASE)
+_LIMIT_WORDS: dict[str, int] = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+}
+_LIMIT_VALUE_PATTERN = rf"(?:\d+|{'|'.join(_LIMIT_WORDS)})"
+_LIMIT_PATTERN = re.compile(
+    rf"\b(?:top|first|limit(?:ed\s+to)?|show(?:\s+me)?|list|display|give\s+me)"
+    rf"\s+(?:the\s+)?(?P<limit>{_LIMIT_VALUE_PATTERN})\b",
+    re.IGNORECASE,
+)
 _WORK_ORDER_CODE_PATTERN = re.compile(r"\bWO-[A-Z0-9]+(?:-[A-Z0-9]+)*\b", re.IGNORECASE)
 _RETRIEVAL_PATTERN = re.compile(
     r"\b(?:show|list|find|get|fetch|retrieve|display|give\s+me|which|what\s+are)\b",
@@ -160,7 +187,8 @@ def _extract_limit(query: str) -> int | None:
     limit_match = _LIMIT_PATTERN.search(query)
     if limit_match is None:
         return None
-    limit = int(limit_match.group(1))
+    raw_limit = limit_match.group("limit").lower()
+    limit = int(raw_limit) if raw_limit.isdecimal() else _LIMIT_WORDS[raw_limit]
     return limit if 1 <= limit <= 100 else None
 
 

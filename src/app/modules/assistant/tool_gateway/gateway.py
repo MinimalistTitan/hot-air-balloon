@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Any, Protocol
 from uuid import UUID
 
+from app.modules.assistant.domain.entities import ToolCallRecord, ToolOutcomeStatus
 from app.modules.assistant.tool_gateway.domain import (
     ToolApprovalDecision,
     ToolAuditRecord,
-    ToolExecutionStatus,
     ToolTraceEvent,
 )
 from app.modules.assistant.tool_gateway.permissions import PermissionChecker
@@ -14,6 +14,11 @@ from app.modules.assistant.tool_gateway.policy import PolicyApprovalService
 from app.modules.assistant.tool_gateway.rate_limit import RateLimiterPort
 from app.modules.assistant.tool_gateway.registry import ToolRegistry, validate_strict_input
 from app.modules.user.domain.authorization import AuthorizationContext
+from app.shared.kernel.response_evidence import (
+    ActionRequiredEvidence,
+    EvidenceAdaptationError,
+    FailureEvidence,
+)
 
 
 class ToolAuditSink(Protocol):
@@ -49,10 +54,13 @@ class ToolGateway:
         payload: dict[str, Any],
         authorization_context: AuthorizationContext,
         conversation_id: UUID | None = None,
-    ) -> dict[str, Any]:
-        tool = self._registry.get(tool_name)
-        if tool is None:
+    ) -> ToolCallRecord:
+        registration = self._registry.get(tool_name)
+
+        if registration is None:
             raise KeyError(f"unknown tool: {tool_name}")
+
+        tool = registration.definition
 
         actor = str(authorization_context.user_id)
         scoped_payload = dict(payload)
@@ -154,26 +162,41 @@ class ToolGateway:
                         payload={"retry_after_seconds": verdict.retry_after_seconds},
                     )
                 )
-                return {
-                    "status": ToolExecutionStatus.RATE_LIMITED.value,
-                    "tool_name": tool.name,
-                    "retry_after_seconds": verdict.retry_after_seconds,
-                }
+
+                return ToolCallRecord(
+                    tool_name=tool.name,
+                    payload=validated_payload,
+                    status=ToolOutcomeStatus.RATE_LIMITED,
+                    evidence=(
+                        FailureEvidence(
+                            evidence_id=f"{tool.name}:rate-limit",
+                            code="rate_limited",
+                            message=(f"Retry after {verdict.retry_after_seconds} seconds."),
+                            retryable=True,
+                        ),
+                    ),
+                    result={
+                        "status": ToolOutcomeStatus.RATE_LIMITED.value,
+                        "retry_after_seconds": (verdict.retry_after_seconds),
+                    },
+                )
 
         decision = ToolApprovalDecision.APPROVED
-        reason: str | None = None
+        approval_reason: str | None = None
 
         if tool.requires_approval:
             if self._approval_service is None:
                 decision = ToolApprovalDecision.APPROVAL_REQUIRED
-                reason = "approval service not configured"
+                approval_reason = "approval service not configured"
             else:
                 decision = await self._approval_service.evaluate(
                     tool_name=tool.name,
                     actor=actor,
                     payload=validated_payload,
                 )
-                reason = None if decision == ToolApprovalDecision.APPROVED else "approval required"
+
+                if decision != ToolApprovalDecision.APPROVED:
+                    approval_reason = "approval required"
 
         audit_record = ToolAuditRecord(
             tool_name=tool.name,
@@ -181,7 +204,7 @@ class ToolGateway:
             payload=validated_payload,
             decision=decision,
             conversation_id=conversation_id,
-            reason=reason,
+            reason=approval_reason,
         )
         await self._audit_sink.write(audit_record)
 
@@ -195,21 +218,40 @@ class ToolGateway:
                     payload={"decision": decision.value},
                 )
             )
-            return {
-                "status": ToolExecutionStatus.APPROVAL_REQUIRED.value,
-                "tool_name": tool.name,
-                "decision": decision.value,
-            }
+            return ToolCallRecord(
+                tool_name=tool.name,
+                payload=validated_payload,
+                status=ToolOutcomeStatus.APPROVAL_REQUIRED,
+                evidence=(
+                    ActionRequiredEvidence(
+                        evidence_id=f"{tool.name}:approval",
+                        action="Obtain approval before executing this action",
+                        reason=approval_reason or "approval required",
+                    ),
+                ),
+                result={
+                    "status": ToolOutcomeStatus.APPROVAL_REQUIRED.value,
+                    "decision": decision.value,
+                },
+            )
 
         attempts = 0
         while True:
             try:
                 raw_output = await tool.handler(validated_payload)
                 result_model = tool.output_model.model_validate(raw_output)
-                result = result_model.model_dump(mode="json")
                 break
             except Exception:
                 if attempts >= tool.max_retries:
+                    await self._trace_sink.append(
+                        ToolTraceEvent(
+                            tool_name=tool.name,
+                            actor=actor,
+                            conversation_id=conversation_id,
+                            event="handler_failed",
+                            payload={"attempts": attempts + 1},
+                        )
+                    )
                     raise
                 attempts += 1
 
@@ -223,9 +265,48 @@ class ToolGateway:
             )
         )
 
-        return {
-            "status": ToolExecutionStatus.SUCCESS.value,
-            "tool_name": tool.name,
-            "applied_payload": validated_payload,
-            "result": result,
-        }
+        validated_result = result_model.model_dump(mode="json")
+        try:
+            evidence = registration.result_adapter.to_evidence(
+                applied_payload=validated_payload,
+                output=result_model,
+            )
+        except EvidenceAdaptationError:
+            await self._trace_sink.append(
+                ToolTraceEvent(
+                    tool_name=tool.name,
+                    actor=actor,
+                    conversation_id=conversation_id,
+                    event="result_adaptation_failed",
+                    payload={},
+                )
+            )
+            return ToolCallRecord(
+                tool_name=tool.name,
+                payload=validated_payload,
+                status=ToolOutcomeStatus.FAILED,
+                evidence=(
+                    FailureEvidence(
+                        evidence_id=f"{tool.name}:failure",
+                        code="invalid_tool_result",
+                        message="The tool returned an inconsistent result.",
+                        retryable=False,
+                    ),
+                ),
+                result={"status": "failed"},
+            )
+
+        if not evidence:
+            raise RuntimeError(f"{tool.name} produced no evidence")
+
+        return ToolCallRecord(
+            tool_name=tool.name,
+            payload=validated_payload,
+            status=ToolOutcomeStatus.SUCCESS,
+            evidence=evidence,
+            result={
+                "status": "success",
+                "applied_payload": validated_payload,
+                "result": validated_result,
+            },
+        )

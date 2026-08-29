@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.modules.assistant.tool_gateway.domain import (
+    AssistantToolRegistration,
     SideEffectType,
     ToolDefinition,
     ToolRateLimit,
@@ -25,6 +26,7 @@ from app.modules.operations.domain.manufacturing_maintenance.work_order_status i
     WorkOrderStatus,
     allowed_next_statuses,
 )
+from app.modules.operations.infrastructure.tools.result_adapters import WORK_ORDERS_ADAPTER
 from app.modules.user.domain.authorization import Permission
 from app.shared.domain.errors import DomainError
 
@@ -116,7 +118,7 @@ def _rejection(
 
 def build_write_work_order_status_tool(
     store_factory: Callable[[], WorkOrderStatusStore],
-) -> ToolDefinition:
+) -> AssistantToolRegistration:
     async def handler(payload: dict[str, Any]) -> dict[str, Any]:
         data = WriteWorkOrderStatusInput.model_validate(payload)
         use_case = ChangeWorkOrderStatus(store=store_factory())
@@ -156,16 +158,19 @@ def build_write_work_order_status_tool(
         )
         return output.model_dump(mode="json")
 
-    return ToolDefinition(
-        name=TOOL_NAME,
-        description=TOOL_DESCRIPTION,
-        input_model=WriteWorkOrderStatusInput,
-        output_model=WriteWorkOrderStatusOutput,
-        handler=handler,
-        required_permission=Permission.WORK_ORDERS_CHANGE_STATUS,
-        requires_approval=True,
-        approval_scope="write",
-        max_retries=0,
-        rate_limit=ToolRateLimit(max_calls=3, window_seconds=60),
-        side_effect_type=SideEffectType.WRITE,
+    return AssistantToolRegistration(
+        definition=ToolDefinition(
+            name=TOOL_NAME,
+            description=TOOL_DESCRIPTION,
+            input_model=WriteWorkOrderStatusInput,
+            output_model=WriteWorkOrderStatusOutput,
+            handler=handler,
+            required_permission=Permission.WORK_ORDERS_CHANGE_STATUS,
+            requires_approval=True,
+            approval_scope="write",
+            max_retries=0,
+            rate_limit=ToolRateLimit(max_calls=3, window_seconds=60),
+            side_effect_type=SideEffectType.WRITE,
+        ),
+        result_adapter=WORK_ORDERS_ADAPTER,
     )

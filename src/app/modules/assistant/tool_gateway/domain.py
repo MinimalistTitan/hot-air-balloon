@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel
 
 from app.modules.user.domain.authorization import Permission
+from app.shared.kernel.response_evidence import EvidenceBlock
 
 
 class ToolApprovalDecision(StrEnum):
@@ -79,3 +80,18 @@ class ToolTraceEvent:
     payload: dict[str, Any]
     conversation_id: UUID | None = None
     created_at_utc: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+class ToolResultAdapter(Protocol):
+    def to_evidence(
+        self,
+        *,
+        applied_payload: Mapping[str, object],
+        output: BaseModel,
+    ) -> tuple[EvidenceBlock, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantToolRegistration:
+    definition: ToolDefinition
+    result_adapter: ToolResultAdapter

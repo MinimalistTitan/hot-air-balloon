@@ -5,14 +5,19 @@ from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from app.modules.assistant.domain.context import AssembledContext
-from app.modules.assistant.domain.entities import AgentRunResult, ToolDescriptor
+from app.modules.assistant.domain.entities import (
+    AgentRunResult,
+    AssistantDecisionEvent,
+    ToolCallRecord,
+    ToolDescriptor,
+)
 from app.modules.assistant.domain.tool_call import ToolCallPolicy
 from app.modules.user.domain.authorization import AuthorizationContext
 
 if TYPE_CHECKING:
     from app.modules.assistant.application.context.providers import ContextRequest
 
-ToolInvoker = Callable[[str, dict[str, object]], Awaitable[dict[str, object]]]
+ToolInvoker = Callable[[str, dict[str, object]], Awaitable[ToolCallRecord]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +73,7 @@ class ToolRuntimePort(Protocol):
         payload: dict[str, object],
         authorization_context: AuthorizationContext,
         conversation_id: UUID | None = None,
-    ) -> dict[str, object]: ...
+    ) -> ToolCallRecord: ...
 
 
 class AgentOrchestratorPort(Protocol):
@@ -88,6 +93,7 @@ class AgentOrchestratorPort(Protocol):
 class AssistantTelemetryPort(Protocol):
     def query_started(self, query: str) -> None: ...
     def tool_called(self, tool_name: str) -> None: ...
+    def decision_recorded(self, event: AssistantDecisionEvent) -> None: ...
     def query_completed(self, tools_used: int) -> None: ...
 
 

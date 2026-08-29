@@ -4,7 +4,7 @@ from app.modules.assistant.domain.ports.web_search import WebSearchPort, WebSear
 from app.modules.assistant.infrastructure.web_search.web_search_service import (
     WebSearchService,
 )
-from app.modules.assistant.tool_gateway.domain import ToolDefinition, ToolRateLimit
+from app.modules.assistant.tool_gateway.domain import AssistantToolRegistration, ToolDefinition, ToolRateLimit
 from app.modules.user.domain.authorization import Permission
 
 
@@ -33,7 +33,7 @@ class WebSearchToolOutput(BaseModel):
     results: list[WebSearchToolResult]
 
 
-def build_web_search_tool(provider: WebSearchPort) -> ToolDefinition:
+def build_web_search_tool(provider: WebSearchPort) -> AssistantToolRegistration:
     service = WebSearchService(provider=provider)
 
     async def invoke(payload: dict[str, object]) -> dict[str, object]:
@@ -59,17 +59,20 @@ def build_web_search_tool(provider: WebSearchPort) -> ToolDefinition:
         )
         return output.model_dump(mode="json")
 
-    return ToolDefinition(
-        name="web_search",
-        description=(
-            "Search public web sources when the user needs current or externally verifiable "
-            "information. Use query for grounded public search terms and max_results from 1-10. "
-            "Do not use for internal ERP work orders, assets, tickets, spare parts, schedules, "
-            "user-table audits, or questions answerable from supplied context. Read-only."
-        ),
-        input_model=WebSearchToolInput,
-        output_model=WebSearchToolOutput,
-        handler=invoke,
-        required_permission=Permission.WEB_SEARCH,
-        rate_limit=ToolRateLimit(max_calls=5, window_seconds=60),
+    return AssistantToolRegistration(
+       definition=ToolDefinition(
+            name="web_search",
+                   description=(
+                       "Search public web sources when the user needs current or externally verifiable "
+                       "information. Use query for grounded public search terms and max_results from 1-10. "
+                       "Do not use for internal ERP work orders, assets, tickets, spare parts, schedules, "
+                       "user-table audits, or questions answerable from supplied context. Read-only."
+                   ),
+                   input_model=WebSearchToolInput,
+                   output_model=WebSearchToolOutput,
+                   handler=invoke,
+                   required_permission=Permission.WEB_SEARCH,
+                   rate_limit=ToolRateLimit(max_calls=5, window_seconds=60),
+       ),
+       result_adapter=None
     )

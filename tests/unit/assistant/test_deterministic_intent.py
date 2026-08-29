@@ -24,6 +24,12 @@ from app.modules.assistant.infrastructure.agents.langgraph.state import GraphSta
             {"site_code": "PLANT-HCM", "status": "open"},
         ),
         (
+            "Show me three open work orders at PLANT-HCM",
+            DeterministicIntent.LIST_WORK_ORDERS,
+            "get_work_orders",
+            {"site_code": "PLANT-HCM", "status": "open", "limit": 3},
+        ),
+        (
             "List the top 5 in-progress work orders for plant-hcm",
             DeterministicIntent.LIST_WORK_ORDERS,
             "get_work_orders",

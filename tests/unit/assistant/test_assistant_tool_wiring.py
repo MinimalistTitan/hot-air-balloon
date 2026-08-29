@@ -7,7 +7,11 @@ from app.core.config import Settings
 from app.core.database.database import create_session_factory
 from app.modules.assistant.application.ports import ToolInvoker
 from app.modules.assistant.domain.context import AssembledContext
-from app.modules.assistant.domain.entities import AgentRunResult, ToolDescriptor
+from app.modules.assistant.domain.entities import (
+    AgentRunResult,
+    AssistantDecisionEvent,
+    ToolDescriptor,
+)
 from app.modules.assistant.domain.ports.web_search import (
     WebSearchPort,
     WebSearchQuery,
@@ -51,14 +55,17 @@ class FakeAgentOrchestrator:
 async def test_build_langgraph_agent_orchestrator_passes_checkpointer() -> None:
     settings = Settings(database_url="sqlite+aiosqlite://", chat_api_key="test-key")
     checkpointer = InMemorySaver()
+    decisions: list[AssistantDecisionEvent] = []
 
     orchestrator = build_langgraph_agent_orchestrator(
         settings=settings,
         checkpointer=checkpointer,
+        decision_observer=decisions.append,
     )
 
     assert orchestrator is not None
     assert orchestrator.checkpointer is checkpointer
+    assert orchestrator.decision_observer == decisions.append
 
 
 async def test_assistant_wiring_composes_all_gateway_tools() -> None:

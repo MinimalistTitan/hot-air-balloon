@@ -131,8 +131,8 @@ class Container:
             session_factory=session_factory,
         )
 
-        #assistant_tools = (*users.tools, *operations.tools, *operations.write_tools)
         assistant_tools = (*users.tools, *operations.tools)
+
         assistant = build_assistant_module(
             settings=settings,
             tools=assistant_tools,
@@ -224,7 +224,7 @@ class Container:
                             )
                         ),
                         tool_permissions_by_name={
-                            tool.name: tool.required_permission.value for tool in assistant_tools
+                            tool.definition.name: tool.definition.required_permission.value for tool in assistant_tools
                         },
                         idle_minutes=settings.consolidation_idle_minutes,
                     )

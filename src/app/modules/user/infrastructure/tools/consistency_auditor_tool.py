@@ -1,6 +1,10 @@
 from typing import Any
 
-from app.modules.assistant.tool_gateway.domain import ToolDefinition, ToolRateLimit
+from app.modules.assistant.tool_gateway.domain import (
+    AssistantToolRegistration,
+    ToolDefinition,
+    ToolRateLimit,
+)
 from app.modules.user.application.ports import UserUnitOfWorkFactory
 from app.modules.user.application.use_cases import (
     RunUserConsistencyAudit,
@@ -12,6 +16,9 @@ from app.modules.user.contracts.consistency_auditor import (
     UserConsistencyAuditorOutputV1,
 )
 from app.modules.user.domain.authorization import Permission
+from app.modules.user.infrastructure.tools.result_adapters import (
+    USER_CONSISTENCY_AUDIT_RESULT_ADAPTER,
+)
 from app.modules.user.presentation.consistency_audit_presenter import (
     to_user_consistency_auditor_output,
 )
@@ -19,7 +26,7 @@ from app.modules.user.presentation.consistency_audit_presenter import (
 
 def build_users_consistency_auditor_tool(
     unit_of_work_factory: UserUnitOfWorkFactory,
-) -> ToolDefinition:
+) -> AssistantToolRegistration:
     use_case = RunUserConsistencyAudit(unit_of_work_factory=unit_of_work_factory)
 
     async def invoke(payload: dict[str, Any]) -> dict[str, Any]:
@@ -37,17 +44,20 @@ def build_users_consistency_auditor_tool(
 
         return output.model_dump(mode="json")
 
-    return ToolDefinition(
-        name=TOOL_USERS_CONSISTENCY_AUDITOR_V1,
-        description=(
-            "Run a read-only deterministic consistency audit of the internal users table for "
-            "duplicate emails, invalid timestamps, names, and status mismatches. Use only when "
-            "the user explicitly requests a user-data consistency audit. Do not use for ordinary "
-            "user lookup, ERP operations, maintenance questions, or general explanations."
+    return AssistantToolRegistration(
+        definition=ToolDefinition(
+            name=TOOL_USERS_CONSISTENCY_AUDITOR_V1,
+            description=(
+                "Run a read-only deterministic consistency audit of the internal users table for "
+                "duplicate emails, invalid timestamps, names, and status mismatches. Use only when "
+                "the user explicitly requests a user-data consistency audit. Do not use for ordinary "
+                "user lookup, ERP operations, maintenance questions, or general explanations."
+            ),
+            input_model=UserConsistencyAuditorInputV1,
+            output_model=UserConsistencyAuditorOutputV1,
+            handler=invoke,
+            required_permission=Permission.AUDIT_LOGS_READ,
+            rate_limit=ToolRateLimit(max_calls=5, window_seconds=60),
         ),
-        input_model=UserConsistencyAuditorInputV1,
-        output_model=UserConsistencyAuditorOutputV1,
-        handler=invoke,
-        required_permission=Permission.AUDIT_LOGS_READ,
-        rate_limit=ToolRateLimit(max_calls=5, window_seconds=60),
+        result_adapter=USER_CONSISTENCY_AUDIT_RESULT_ADAPTER,
     )

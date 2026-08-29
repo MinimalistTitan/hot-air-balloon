@@ -31,6 +31,7 @@ from app.modules.assistant.domain.tool_call import ToolCallPolicy
 from app.modules.assistant.infrastructure.agents.langgraph.agent_brain import (
     AgentBrain,
 )
+from app.modules.assistant.infrastructure.agents.langgraph.context import DecisionObserver
 from app.modules.assistant.infrastructure.agents.langgraph.orchestrator import (
     LangGraphAgentOrchestrator,
 )
@@ -70,7 +71,7 @@ from app.modules.assistant.infrastructure.telemetry.orchestration_observability 
 )
 from app.modules.assistant.infrastructure.tool_runtime.gateway_runtime import GatewayToolRuntime
 from app.modules.assistant.infrastructure.web_search.tool import build_web_search_tool
-from app.modules.assistant.tool_gateway.domain import ToolDefinition
+from app.modules.assistant.tool_gateway.domain import AssistantToolRegistration
 from app.modules.assistant.tool_gateway.registry import ToolRegistry
 
 
@@ -85,6 +86,7 @@ def build_langgraph_agent_orchestrator(
     settings: Settings,
     *,
     checkpointer: BaseCheckpointSaver[Any] | PostgresCheckpointer | None = None,
+    decision_observer: DecisionObserver | None = None,
 ) -> LangGraphAgentOrchestrator | None:
     if settings.chat_api_key is None:
         return None
@@ -100,12 +102,13 @@ def build_langgraph_agent_orchestrator(
         brain=AgentBrain(llm=llm),
         model_name=llm.model_name,
         checkpointer=effective_checkpointer,
+        decision_observer=decision_observer,
     )
 
 
 def build_assistant_module(
     settings: Settings,
-    tools: Iterable[ToolDefinition],
+    tools: Iterable[AssistantToolRegistration],
     *,
     session_factory: SessionFactory | None = None,
     web_search_provider: WebSearchPort | None = None,
@@ -124,12 +127,15 @@ def build_assistant_module(
 
     registered_tools_tuple = tuple(registered_tools)
 
+    effective_telemetry = telemetry if telemetry is not None else StructlogAssistantTelemetry()
+
     effective_orchestrator = agent_orchestrator
 
     if effective_orchestrator is None:
         effective_orchestrator = build_langgraph_agent_orchestrator(
             settings=settings,
             checkpointer=checkpointer,
+            decision_observer=effective_telemetry.decision_recorded,
         )
 
     if effective_orchestrator is None:
@@ -138,7 +144,7 @@ def build_assistant_module(
     effective_policy = tool_policy
     if effective_policy is None:
         effective_policy = ToolCallPolicy(
-            allowed_tool_names=frozenset(tool.name for tool in registered_tools_tuple),
+            allowed_tool_names=frozenset(tool.definition.name for tool in registered_tools_tuple),
             max_total_calls=1,
             max_calls_per_tool=1,
             fail_on_policy_violation=True,
@@ -171,8 +177,6 @@ def build_assistant_module(
             else InMemoryConversationStore(max_turns_per_conversation=12)
         )
     )
-
-    effective_telemetry = telemetry if telemetry is not None else StructlogAssistantTelemetry()
 
     effective_context_assembler = context_assembler
     if effective_context_assembler is None:

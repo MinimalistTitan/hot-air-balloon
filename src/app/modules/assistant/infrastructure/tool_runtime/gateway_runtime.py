@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.core.database.database import SessionFactory
 from app.modules.assistant.application.ports import ToolRuntimePort
-from app.modules.assistant.domain.entities import ToolDescriptor
+from app.modules.assistant.domain.entities import ToolDescriptor, ToolCallRecord
 from app.modules.assistant.tool_gateway.rate_limit import (
     FixedWindowRateLimiter,
     RateLimiterPort,
@@ -30,22 +30,34 @@ class GatewayToolRuntime(ToolRuntimePort):
         self,
         authorization_context: AuthorizationContext,
     ) -> list[ToolDescriptor]:
-        return [
-            ToolDescriptor(
-                name=tool.name,
-                description=tool.description,
-                input_schema=tool.input_model.model_json_schema(),
-                site_code_field=tool.site_code_field,
-                is_mutating=tool.side_effect_type.value == "write",
-            )
-            for tool in self.registry.list_tools()
-            if authorization_context.can(tool.required_permission)
-            and (
+        descriptors: list[ToolDescriptor] = []
+
+        for registration in self.registry.list_registrations():
+            tool = registration.definition
+
+            if not authorization_context.can(tool.required_permission):
+                continue
+
+            has_usable_site_scope = (
                 tool.site_code_field is None
                 or authorization_context.global_scope
                 or bool(authorization_context.site_codes)
             )
-        ]
+
+            if not has_usable_site_scope:
+                continue
+
+            descriptors.append(
+                ToolDescriptor(
+                    name=tool.name,
+                    description=tool.description,
+                    input_schema=tool.input_model.model_json_schema(),
+                    site_code_field=tool.site_code_field,
+                    is_mutating=tool.side_effect_type.value == "write",
+                )
+            )
+
+        return descriptors
 
     async def invoke(
         self,
@@ -53,7 +65,7 @@ class GatewayToolRuntime(ToolRuntimePort):
         payload: dict[str, object],
         authorization_context: AuthorizationContext,
         conversation_id: UUID | None = None,
-    ) -> dict[str, object]:
+    ) -> ToolCallRecord:
         async with self.session_factory() as session:
             gateway = build_tool_gateway(
                 registry=self.registry,

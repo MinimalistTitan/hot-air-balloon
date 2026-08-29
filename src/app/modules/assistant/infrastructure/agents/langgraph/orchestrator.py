@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
@@ -8,31 +8,45 @@ from app.modules.assistant.application.ports import (
     AgentOrchestratorPort,
     ToolInvoker,
 )
+from app.modules.assistant.application.response_composer import FinalResponseComposer
 from app.modules.assistant.domain.context import AssembledContext
 from app.modules.assistant.domain.entities import AgentRunResult, ToolDescriptor
 from app.modules.assistant.domain.tool_call import ToolCallPolicy
 from app.modules.assistant.domain.value_object import OrchestrationFinishReason
-from app.modules.assistant.infrastructure.agents.langgraph.context import GraphContext
+from app.modules.assistant.infrastructure.agents.langgraph.context import (
+    DecisionObserver,
+    GraphContext,
+)
 from app.modules.assistant.infrastructure.agents.langgraph.contracts import AgentBrain
 from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState
 from app.modules.assistant.infrastructure.agents.langgraph.workflow import build_workflow
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph.state import CompiledStateGraph
 
+
+class CompiledWorkflow(Protocol):
+    async def ainvoke(
+        self,
+        input: GraphState,
+        config: RunnableConfig | None = None,
+        *,
+        context: GraphContext | None = None,
+    ) -> object: ...
 
 @dataclass(slots=True)
 class LangGraphAgentOrchestrator(AgentOrchestratorPort):
     brain: AgentBrain
     model_name: str
+    response_composer: FinalResponseComposer = field(default_factory=FinalResponseComposer)
     agent_name: str = "assistant.langgraph"
     checkpointer: BaseCheckpointSaver[Any] | None = None
-    _workflow: CompiledStateGraph[GraphState, GraphContext, GraphState, GraphState] = field(
+    decision_observer: DecisionObserver | None = None
+    _workflow: CompiledWorkflow = field(
         init=False,
         repr=False,
     )
 
     def __post_init__(self) -> None:
-        self._workflow = build_workflow(self.checkpointer)
+        self._workflow = cast(CompiledWorkflow, build_workflow(self.checkpointer))
 
     async def run(
         self,
@@ -68,21 +82,40 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
             "answer": "",
             "finish_reason": None,
         }
+
         configuration = cast(
             RunnableConfig,
             {"configurable": {"thread_id": str(conversation_id)}},
         )
+
         raw_result = await self._workflow.ainvoke(
             initial_state,
             config=configuration,
-            context=GraphContext(brain=self.brain, tool_invoker=tool_invoker),
+            context=GraphContext(
+                brain=self.brain,
+                tool_invoker=tool_invoker,
+                response_composer=self.response_composer,
+                conversation_id=conversation_id,
+                decision_observer=self.decision_observer,
+            ),
         )
-        result = cast(GraphState, cast(dict[str, Any], raw_result))
+
+        result = cast(GraphState, raw_result)
+
         finish_reason = result["finish_reason"] or OrchestrationFinishReason.FAILED
+
+        tool_calls = result["tool_calls"]
+        evidence = tuple(
+            block
+            for tool_call in tool_calls
+            for block in tool_call.evidence
+        )
+
         return AgentRunResult(
             answer=result["answer"] or "No answer generated.",
             agent_name=self.agent_name,
             model_name=self.model_name,
             finish_reason=finish_reason,
-            tool_calls=result["tool_calls"],
+            tool_calls=tool_calls,
+            evidence=evidence,
         )
