@@ -35,6 +35,7 @@ class FakeAgentOrchestrator:
     async def run(
         self,
         conversation_id: UUID,
+        authorization_context: AuthorizationContext,
         user_query: str,
         available_tools: list[ToolDescriptor],
         tool_invoker: ToolInvoker,

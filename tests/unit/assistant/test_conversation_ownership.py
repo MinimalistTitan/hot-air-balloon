@@ -63,10 +63,12 @@ class RecordingToolRuntime:
 class RecordingAgent:
     def __init__(self) -> None:
         self.calls = 0
+        self.authorization_contexts: list[AuthorizationContext] = []
 
     async def run(
         self,
         conversation_id: UUID,
+        authorization_context: AuthorizationContext,
         user_query: str,
         available_tools: list[ToolDescriptor],
         tool_invoker: ToolInvoker,
@@ -75,6 +77,7 @@ class RecordingAgent:
         max_tool_calls: int,
         allow_tool_calls: bool,
     ) -> AgentRunResult:
+        self.authorization_contexts.append(authorization_context)
         del (
             conversation_id,
             user_query,
@@ -206,6 +209,7 @@ async def test_completed_query_mirrors_one_atomic_exchange() -> None:
     assert len(assembler.calls) == 1
     assert tools.list_calls == 1
     assert agent.calls == 1
+    assert [context.user_id for context in agent.authorization_contexts] == [owner_user_id]
     assert telemetry.completed == 1
 
 

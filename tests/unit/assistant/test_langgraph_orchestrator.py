@@ -16,6 +16,7 @@ from app.modules.assistant.infrastructure.agents.langgraph.orchestrator import (
     LangGraphAgentOrchestrator,
 )
 from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState, PlannedAction
+from app.modules.user.domain.authorization import AuthorizationContext, RoleName
 
 
 class FakeBrain:
@@ -35,6 +36,14 @@ class FakeBrain:
         return f"Asset is {state['tool_calls'][0].result['status']}."
 
 
+def _authorization_context() -> AuthorizationContext:
+    return AuthorizationContext(
+        user_id=uuid4(),
+        roles=frozenset({RoleName.READ_ONLY_ANALYST}),
+        global_scope=True,
+    )
+
+
 async def test_orchestrator_runs_tool_loop_and_returns_trace() -> None:
     async def invoke_tool(
         tool_name: str,
@@ -51,6 +60,7 @@ async def test_orchestrator_runs_tool_loop_and_returns_trace() -> None:
         model_name="test-model",
     ).run(
         conversation_id=uuid4(),
+        authorization_context=_authorization_context(),
         user_query="What is the status of A-1?",
         available_tools=[ToolDescriptor(name="asset_status", description="Read asset status")],
         tool_invoker=invoke_tool,
@@ -146,6 +156,7 @@ async def test_orchestrator_never_seeds_answer_with_rendered_context() -> None:
         model_name="test-model",
     ).run(
         conversation_id=uuid4(),
+        authorization_context=_authorization_context(),
         user_query="Explain what a maintenance work order is in one sentence",
         available_tools=[],
         tool_invoker=_fail_invoker,

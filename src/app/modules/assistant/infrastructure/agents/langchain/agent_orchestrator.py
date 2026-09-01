@@ -24,6 +24,7 @@ from app.modules.assistant.infrastructure.agents.structured_decision import (
     AgentDecision,
     AgentFinalResponse,
 )
+from app.modules.user.domain.authorization import AuthorizationContext
 
 
 @dataclass(slots=True)
@@ -34,6 +35,7 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
     async def run(
         self,
         conversation_id: UUID,
+        authorization_context: AuthorizationContext,
         user_query: str,
         available_tools: list[ToolDescriptor],
         tool_invoker: ToolInvoker,
@@ -42,7 +44,7 @@ class LangChainAgentOrchestrator(AgentOrchestratorPort):
         max_tool_calls: int,
         allow_tool_calls: bool,
     ) -> AgentRunResult:
-        del conversation_id
+        del conversation_id, authorization_context
         tool_calls: list[ToolCallRecord] = []
         budget = ToolCallBudgetState()
         scratchpad: list[dict[str, Any]] = []

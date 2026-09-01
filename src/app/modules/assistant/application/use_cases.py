@@ -63,6 +63,7 @@ class OrchestrateAssistantQuery:
 
             run = await self.agent_orchestrator.run(
                 conversation_id=conversation_id,
+                authorization_context=command.authorization_context,
                 user_query=command.query,
                 available_tools=tools,
                 tool_invoker=self._tool_invoker(command.authorization_context, conversation_id),

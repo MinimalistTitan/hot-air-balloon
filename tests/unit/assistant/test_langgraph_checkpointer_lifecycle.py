@@ -23,6 +23,7 @@ from app.modules.assistant.infrastructure.agents.langgraph.orchestrator import (
 from app.modules.assistant.infrastructure.agents.langgraph.postgres_checkpointer import (
     PostgresCheckpointer,
 )
+from app.modules.user.domain.authorization import AuthorizationContext
 
 
 class RecordingPool:
@@ -64,6 +65,7 @@ class ManagedFakeAgent:
     async def run(
         self,
         conversation_id: UUID,
+        authorization_context: AuthorizationContext,
         user_query: str,
         available_tools: list[ToolDescriptor],
         tool_invoker: ToolInvoker,
@@ -74,6 +76,7 @@ class ManagedFakeAgent:
     ) -> AgentRunResult:
         del (
             conversation_id,
+            authorization_context,
             user_query,
             available_tools,
             tool_invoker,

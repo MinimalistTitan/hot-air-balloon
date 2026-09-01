@@ -22,7 +22,9 @@ from app.modules.assistant.infrastructure.agents.langgraph.postgres_checkpointer
     PostgresCheckpointer,
 )
 from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState
+from app.modules.assistant.infrastructure.agents.langgraph.thread_identity import derive_thread_id
 from app.modules.assistant.infrastructure.agents.langgraph.workflow import build_workflow
+from app.modules.user.domain.authorization import AuthorizationContext
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 
@@ -84,6 +86,7 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
     async def run(
         self,
         conversation_id: UUID,
+        authorization_context: AuthorizationContext,
         user_query: str,
         available_tools: list[ToolDescriptor],
         tool_invoker: ToolInvoker,
@@ -118,7 +121,14 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
 
         configuration = cast(
             RunnableConfig,
-            {"configurable": {"thread_id": str(conversation_id)}},
+            {
+                "configurable": {
+                    "thread_id": derive_thread_id(
+                        owner_user_id=authorization_context.user_id,
+                        conversation_id=conversation_id,
+                    )
+                }
+            },
         )
 
         workflow = self._workflow
