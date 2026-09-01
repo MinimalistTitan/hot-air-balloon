@@ -38,6 +38,9 @@ class GatewayToolRuntime(ToolRuntimePort):
             if not authorization_context.can(tool.required_permission):
                 continue
 
+            # Check if the tool has a usable site scope based on the authorization context
+            # ex: a tool requires a site code, but the authorization context has no site codes and is not global scoped
+            # will not have a usable site scope and should be skipped
             has_usable_site_scope = (
                 tool.site_code_field is None
                 or authorization_context.global_scope

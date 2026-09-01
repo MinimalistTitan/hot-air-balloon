@@ -132,6 +132,10 @@ class Container:
         )
 
         assistant_tools = (*users.tools, *operations.tools)
+        effective_assistant_checkpointer = assistant_checkpointer
+
+        if effective_assistant_checkpointer is None and settings.assistant_checkpointing_enabled:
+            effective_assistant_checkpointer = PostgresCheckpointer(settings.database_url)
 
         assistant = build_assistant_module(
             settings=settings,
@@ -143,12 +147,23 @@ class Container:
             conversation_store=assistant_conversation_store,
             telemetry=assistant_telemetry,
             tool_policy=assistant_tool_policy,
-            checkpointer=assistant_checkpointer,
+            checkpointer=effective_assistant_checkpointer,
         )
 
         resources = list(managed_resources)
-        if isinstance(assistant_checkpointer, ManagedResource):
-            resources.append(assistant_checkpointer)
+
+        def append_resource_once(resource: ManagedResource) -> None:
+            if any(existing is resource for existing in resources):
+                return
+            resources.append(resource)
+
+        if assistant is not None and isinstance(effective_assistant_checkpointer, ManagedResource):
+            append_resource_once(effective_assistant_checkpointer)
+        if assistant is not None and isinstance(
+            assistant.query.agent_orchestrator, ManagedResource
+        ):
+            append_resource_once(assistant.query.agent_orchestrator)
+
         resources.append(
             ShortTermRetentionJob(
                 session_factory=session_factory,

@@ -91,17 +91,11 @@ def build_langgraph_agent_orchestrator(
     if settings.chat_api_key is None:
         return None
 
-    effective_checkpointer: BaseCheckpointSaver[Any] | None
-    if isinstance(checkpointer, PostgresCheckpointer):
-        effective_checkpointer = checkpointer.saver
-    else:
-        effective_checkpointer = checkpointer
-
     llm = LangChainChatModelFactory(settings).build()
     return LangGraphAgentOrchestrator(
         brain=AgentBrain(llm=llm),
         model_name=llm.model_name,
-        checkpointer=effective_checkpointer,
+        checkpointer=checkpointer,
         decision_observer=decision_observer,
     )
 

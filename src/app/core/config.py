@@ -1,7 +1,6 @@
 from enum import StrEnum
 from functools import lru_cache
 from typing import Literal, Self
-from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +51,8 @@ class Settings(BaseSettings):
     smoke_enabled: bool = Field(default=False)
     chat_model: str = Field(default="gpt-5.4")
     chat_api_key: SecretStr | None = None
+    # This remains off until the graph-state allowlist migration is complete.
+    assistant_checkpointing_enabled: bool = False
     embedding_model: str = Field(default="text-embedding-3-small")
     embedding_api_key: SecretStr | None = None
 
@@ -141,6 +142,11 @@ class Settings(BaseSettings):
     def enforce_production_database(self) -> Self:
         if self.environment is Environment.PRODUCTION and self.database_url.startswith("sqlite"):
             msg = "Production requires a durable, externally managed database"
+            raise ValueError(msg)
+        if self.assistant_checkpointing_enabled and not self.database_url.startswith(
+            ("postgresql://", "postgresql+asyncpg://")
+        ):
+            msg = "assistant_checkpointing_enabled requires a PostgreSQL database URL"
             raise ValueError(msg)
         return self
 

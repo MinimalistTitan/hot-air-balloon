@@ -102,13 +102,13 @@ class MemoryWriterPort(Protocol):
         self,
         conversation_id: UUID,
         turn: ConversationTurn,
-        owner_user_id: UUID | None = None,
+        owner_user_id: UUID,
     ) -> None: ...
 
     async def close_conversation(
         self,
         conversation_id: UUID,
-        owner_user_id: UUID | None = None,
+        owner_user_id: UUID,
     ) -> None: ...
 
 
@@ -156,16 +156,31 @@ class UserMemoryErasePort(Protocol):
 
 
 class ConversationStorePort(Protocol):
+    async def claim_or_validate(
+        self,
+        conversation_id: UUID,
+        owner_user_id: UUID,
+        observed_at_utc: datetime,
+    ) -> None: ...
+
     async def read_recent(
         self,
         conversation_id: UUID,
+        owner_user_id: UUID,
         limit: int = 12,
-        owner_user_id: UUID | None = None,
     ) -> list[ConversationTurn]: ...
 
     async def append(
         self,
         conversation_id: UUID,
         turn: ConversationTurn,
-        owner_user_id: UUID | None = None,
+        owner_user_id: UUID,
+    ) -> None: ...
+
+    async def append_completed_exchange(
+        self,
+        conversation_id: UUID,
+        owner_user_id: UUID,
+        user_turn: ConversationTurn,
+        assistant_turn: ConversationTurn,
     ) -> None: ...

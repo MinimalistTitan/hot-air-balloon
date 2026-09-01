@@ -19,6 +19,7 @@ from app.modules.assistant.contracts.messages import (
     AssistantQueryResponseV1,
     AssistantToolCallTraceV1,
 )
+from app.modules.assistant.domain.entities import ToolCallRecord
 from app.modules.assistant.domain.errors import AssistantOrchestrationFailedError
 from app.modules.assistant.domain.tool_call import ToolCallPolicy
 from app.modules.user.domain.authorization import AuthorizationContext
@@ -37,10 +38,16 @@ class OrchestrateAssistantQuery:
         self.telemetry.query_started(command.query)
         conversation_id = command.conversation_id or uuid4()
         owner_user_id = command.authorization_context.user_id
+        user_turn_created_at = datetime.now(UTC)
+        await self.conversation_store.claim_or_validate(
+            conversation_id=conversation_id,
+            owner_user_id=owner_user_id,
+            observed_at_utc=user_turn_created_at,
+        )
         history = await self.conversation_store.read_recent(
             conversation_id,
-            limit=12,
             owner_user_id=owner_user_id,
+            limit=12,
         )
         context = await self.context_assembler.assemble(
             ContextRequest(
@@ -67,24 +74,19 @@ class OrchestrateAssistantQuery:
         except Exception as ex:
             raise AssistantOrchestrationFailedError(str(ex)) from ex
 
-        await self.conversation_store.append(
-            conversation_id,
-            ConversationTurn(
+        await self.conversation_store.append_completed_exchange(
+            conversation_id=conversation_id,
+            owner_user_id=owner_user_id,
+            user_turn=ConversationTurn(
                 role="user",
                 content=command.query,
-                created_at_utc=datetime.now(UTC),
+                created_at_utc=user_turn_created_at,
             ),
-            owner_user_id=owner_user_id,
-        )
-
-        await self.conversation_store.append(
-            conversation_id,
-            ConversationTurn(
+            assistant_turn=ConversationTurn(
                 role="assistant",
                 content=run.answer,
                 created_at_utc=datetime.now(UTC),
             ),
-            owner_user_id=owner_user_id,
         )
 
         for item in run.tool_calls:
@@ -113,7 +115,7 @@ class OrchestrateAssistantQuery:
         authorization_context: AuthorizationContext,
         conversation_id: UUID,
     ) -> ToolInvoker:
-        async def invoke(tool_name: str, payload: dict[str, object]) -> dict[str, object]:
+        async def invoke(tool_name: str, payload: dict[str, object]) -> ToolCallRecord:
             return await self.tool_runtime.invoke(
                 tool_name,
                 payload,

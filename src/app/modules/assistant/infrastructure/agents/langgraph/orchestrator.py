@@ -18,6 +18,9 @@ from app.modules.assistant.infrastructure.agents.langgraph.context import (
     GraphContext,
 )
 from app.modules.assistant.infrastructure.agents.langgraph.contracts import AgentBrain
+from app.modules.assistant.infrastructure.agents.langgraph.postgres_checkpointer import (
+    PostgresCheckpointer,
+)
 from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState
 from app.modules.assistant.infrastructure.agents.langgraph.workflow import build_workflow
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -26,7 +29,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 class CompiledWorkflow(Protocol):
     async def ainvoke(
         self,
-        input: GraphState,
+        graph_input: GraphState,
         config: RunnableConfig | None = None,
         *,
         context: GraphContext | None = None,
@@ -38,15 +41,45 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
     model_name: str
     response_composer: FinalResponseComposer = field(default_factory=FinalResponseComposer)
     agent_name: str = "assistant.langgraph"
-    checkpointer: BaseCheckpointSaver[Any] | None = None
+    checkpointer: BaseCheckpointSaver[Any] | PostgresCheckpointer | None = None
     decision_observer: DecisionObserver | None = None
-    _workflow: CompiledWorkflow = field(
+    _workflow: CompiledWorkflow | None = field(
+        default=None,
         init=False,
         repr=False,
     )
+    _started: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._workflow = cast(CompiledWorkflow, build_workflow(self.checkpointer))
+        # AsyncPostgresSaver must be created inside a running event loop.  Its
+        # managed wrapper therefore cannot supply a saver during synchronous
+        # container construction; compilation is deferred to start().
+        if not isinstance(self.checkpointer, PostgresCheckpointer):
+            self._workflow = cast(CompiledWorkflow, build_workflow(self.checkpointer))
+
+    async def start(self) -> None:
+        if self._started:
+            return
+
+        if self._workflow is None:
+            self._workflow = cast(
+                CompiledWorkflow,
+                build_workflow(self._resolved_checkpointer()),
+            )
+
+        self._started = True
+
+    async def stop(self) -> None:
+        if not self._started:
+            return
+
+        self._workflow = None
+        self._started = False
+
+    def _resolved_checkpointer(self) -> BaseCheckpointSaver[Any] | None:
+        if isinstance(self.checkpointer, PostgresCheckpointer):
+            return self.checkpointer.saver
+        return self.checkpointer
 
     async def run(
         self,
@@ -88,7 +121,11 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
             {"configurable": {"thread_id": str(conversation_id)}},
         )
 
-        raw_result = await self._workflow.ainvoke(
+        workflow = self._workflow
+        if workflow is None:
+            raise RuntimeError("LangGraphAgentOrchestrator has not been started")
+
+        raw_result = await workflow.ainvoke(
             initial_state,
             config=configuration,
             context=GraphContext(

@@ -3,6 +3,7 @@ from typing import cast
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from app.modules.assistant.domain.errors import ConversationOwnershipError
 from app.modules.user.domain.errors import (
     EmailAlreadyRegisteredError,
     InvalidDisplayNameError,
@@ -12,6 +13,11 @@ from app.modules.user.domain.errors import (
 from app.shared.domain.errors import DomainError
 
 ERROR_RESPONSES: dict[type[DomainError], tuple[int, str, str]] = {
+    ConversationOwnershipError: (
+        status.HTTP_404_NOT_FOUND,
+        "Conversation not found",
+        "The requested conversation was not found.",
+    ),
     InvalidEmailError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid email", ""),
     InvalidDisplayNameError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid display name", ""),
     EmailAlreadyRegisteredError: (
