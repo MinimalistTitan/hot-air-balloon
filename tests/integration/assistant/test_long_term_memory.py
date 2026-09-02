@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -48,11 +49,36 @@ class FakeVectorIndex:
     async def fetch_ids(self, namespace: str, vector_ids: list[str]) -> set[str]:
         return set(vector_ids)
 
+    async def query_ids(
+        self,
+        namespace: str,
+        values: list[float],
+        limit: int,
+        metadata_filter: dict[str, str],
+    ) -> list[str]:
+        del namespace, values, limit, metadata_filter
+        return []
+
     async def list_ids(self, namespace: str) -> set[str]:
         return self.ids_by_namespace.get(namespace, set())
 
     async def delete_ids(self, namespace: str, vector_ids: list[str]) -> None:
         self.deleted_ids.append((namespace, vector_ids))
+
+
+class RecordingCheckpointEraser:
+    def __init__(self, *, failure: Exception | None = None) -> None:
+        self.calls: list[tuple[UUID, UUID]] = []
+        self.failure = failure
+
+    async def erase_conversation(
+        self,
+        owner_user_id: UUID,
+        conversation_id: UUID,
+    ) -> None:
+        self.calls.append((owner_user_id, conversation_id))
+        if self.failure is not None:
+            raise self.failure
 
 
 async def test_repository_persists_lineage_and_user_memory_namespace() -> None:
@@ -344,7 +370,12 @@ async def test_user_memory_eraser_deletes_memory_vectors_turns_and_conversations
         await session.commit()
 
     vector_index = FakeVectorIndex()
-    eraser = UserMemoryEraser(session_factory=session_factory, vector_index=vector_index)
+    checkpoint_eraser = RecordingCheckpointEraser()
+    eraser = UserMemoryEraser(
+        session_factory=session_factory,
+        vector_index=vector_index,
+        checkpoint_eraser=checkpoint_eraser,
+    )
 
     result = await eraser.erase_user_memory(owner_user_id)
 
@@ -355,6 +386,7 @@ async def test_user_memory_eraser_deletes_memory_vectors_turns_and_conversations
     assert vector_index.deleted_ids == [
         ("user-memory", [str(owned_memory_id), str(lineage_memory_id)]),
     ]
+    assert checkpoint_eraser.calls == [(owner_user_id, conversation_id)]
 
     async with session_factory() as session:
         remaining_memory_ids = set(
@@ -376,4 +408,68 @@ async def test_user_memory_eraser_deletes_memory_vectors_turns_and_conversations
     assert remaining_memory_ids == {untouched_memory_id}
     assert remaining_turns == []
     assert remaining_conversations == []
+    await engine.dispose()
+
+
+async def test_user_memory_checkpoint_failure_rolls_back_transcript_erasure() -> None:
+    engine = create_async_engine("sqlite+aiosqlite://")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    session_factory = create_session_factory(engine)
+    owner_user_id = uuid4()
+    conversation_id = uuid4()
+    turn_id = uuid4()
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        session.add(
+            AssistantConversationRecord(
+                id=conversation_id,
+                owner_user_id=owner_user_id,
+                started_at=now,
+                last_turn_at=now,
+                turn_count=1,
+                consolidated_at=None,
+                closed_at=None,
+            )
+        )
+        session.add(
+            ConversationTurnRecord(
+                id=turn_id,
+                conversation_id=conversation_id,
+                owner_user_id=owner_user_id,
+                role="user",
+                content="keep until checkpoint erasure succeeds",
+                created_at=now,
+                expires_at=None,
+            )
+        )
+        await session.commit()
+
+    eraser = UserMemoryEraser(
+        session_factory=session_factory,
+        vector_index=FakeVectorIndex(),
+        checkpoint_eraser=RecordingCheckpointEraser(
+            failure=RuntimeError("checkpoint database unavailable")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="checkpoint database unavailable"):
+        await eraser.erase_user_memory(owner_user_id)
+
+    async with session_factory() as session:
+        assert (
+            await session.scalar(
+                select(ConversationTurnRecord.id).where(ConversationTurnRecord.id == turn_id)
+            )
+            == turn_id
+        )
+        assert (
+            await session.scalar(
+                select(AssistantConversationRecord.id).where(
+                    AssistantConversationRecord.id == conversation_id
+                )
+            )
+            == conversation_id
+        )
     await engine.dispose()

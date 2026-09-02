@@ -31,6 +31,9 @@ from app.modules.assistant.domain.tool_call import ToolCallPolicy
 from app.modules.assistant.infrastructure.agents.langgraph.agent_brain import (
     AgentBrain,
 )
+from app.modules.assistant.infrastructure.agents.langgraph.checkpoint_eraser import (
+    LangGraphCheckpointEraser,
+)
 from app.modules.assistant.infrastructure.agents.langgraph.context import DecisionObserver
 from app.modules.assistant.infrastructure.agents.langgraph.orchestrator import (
     LangGraphAgentOrchestrator,
@@ -229,6 +232,9 @@ def build_assistant_module(
             vector_index=PineconeVectorIndex(
                 api_key=settings.pinecone_api_key.get_secret_value(),
                 index_name=settings.pinecone_index_name,
+            ),
+            checkpoint_eraser=(
+                LangGraphCheckpointEraser(checkpointer) if checkpointer is not None else None
             ),
         )
 

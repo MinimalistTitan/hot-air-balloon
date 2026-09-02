@@ -1,5 +1,3 @@
-from typing import cast
-
 from app.modules.assistant.domain.entities import DecisionOutcome, DecisionStage
 from app.modules.assistant.infrastructure.agents.langgraph.context import GraphContext
 from app.modules.assistant.infrastructure.agents.langgraph.decision_observability import (
@@ -18,12 +16,11 @@ async def plan_action(
 ) -> dict[str, PlannedAction]:
     callable_tools = [
         tool
-        for tool in state["available_tools"]
-        if state["remaining_tool_calls"] > 0
-        and state["per_tool_calls"].get(tool.name, 0) < state["max_calls_per_tool"]
+        for tool in runtime.context.available_tools
+        if runtime.context.call_budget.can_call(tool.name)
     ]
 
-    resolution = resolve_intent(state["user_query"])
+    resolution = resolve_intent(runtime.context.user_query)
     if resolution is not None:
         callable_tool_names = {tool.name for tool in callable_tools}
         if resolution.tool_name is None or resolution.tool_name not in callable_tool_names:
@@ -95,8 +92,7 @@ async def plan_action(
             }
         }
 
-    planning_state = cast(GraphState, dict(state))
-    planning_state["available_tools"] = callable_tools
+    planning_state = runtime.context.agent_state(state, available_tools=callable_tools)
     planned_action = await runtime.context.brain.plan_action(planning_state)
     confidence = planned_action.get("confidence")
     record_decision(

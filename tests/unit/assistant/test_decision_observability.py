@@ -1,33 +1,45 @@
 from dataclasses import asdict
 from types import SimpleNamespace
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from langgraph.runtime import Runtime
 from structlog.testing import capture_logs
 
+from app.modules.assistant.domain.context import AssembledContext
 from app.modules.assistant.domain.entities import (
     AssistantDecisionEvent,
     DecisionOutcome,
     DecisionStage,
+    ToolCallRecord,
     ToolDescriptor,
+    ToolOutcomeStatus,
 )
-from app.modules.assistant.infrastructure.agents.langgraph.context import GraphContext
+from app.modules.assistant.infrastructure.agents.langgraph.context import (
+    GraphContext,
+    ToolCallBudget,
+)
 from app.modules.assistant.infrastructure.agents.langgraph.nodes.plan_action import plan_action
 from app.modules.assistant.infrastructure.agents.langgraph.nodes.tool_call import invoke_tool
-from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState, PlannedAction
+from app.modules.assistant.infrastructure.agents.langgraph.state import (
+    CURRENT_WORKFLOW_VERSION,
+    AgentStateView,
+    GraphState,
+    PlannedAction,
+)
 from app.modules.assistant.infrastructure.telemetry.orchestration_observability import (
     StructlogAssistantTelemetry,
 )
+from app.modules.user.domain.authorization import AuthorizationContext, RoleName
 
 CONVERSATION_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
 class RecordingBrain:
-    async def classify_intent(self, state: GraphState) -> str:
+    async def classify_intent(self, state: AgentStateView) -> str:
         return "assistant_query"
 
-    async def plan_action(self, state: GraphState) -> PlannedAction:
+    async def plan_action(self, state: AgentStateView) -> PlannedAction:
         return {
             "action": "tool_call",
             "tool_name": "web_search",
@@ -37,7 +49,7 @@ class RecordingBrain:
             "rationale": "Current public guidance requires web search.",
         }
 
-    async def respond(self, state: GraphState) -> str:
+    async def respond(self, state: AgentStateView) -> str:
         return "response"
 
 
@@ -49,21 +61,23 @@ class ResultInvoker:
         self,
         tool_name: str,
         payload: dict[str, object],
-    ) -> dict[str, object]:
-        return self.result
+    ) -> ToolCallRecord:
+        return ToolCallRecord(
+            tool_name=tool_name,
+            payload=payload,
+            status=ToolOutcomeStatus.SUCCESS,
+            evidence=(),
+            result=self.result,
+        )
 
 
 def _state(
-    query: str,
     descriptor: ToolDescriptor,
     *,
     payload: dict[str, object] | None = None,
 ) -> GraphState:
     return {
-        "user_query": query,
-        "context_prompt": "",
-        "available_tools": [descriptor],
-        "conversation_history": [],
+        "workflow_version": CURRENT_WORKFLOW_VERSION,
         "intent": "assistant_query",
         "planned_action": {
             "action": "tool_call",
@@ -75,10 +89,6 @@ def _state(
         },
         "pending_call": None,
         "tool_calls": [],
-        "total_tool_calls": 0,
-        "per_tool_calls": {},
-        "remaining_tool_calls": 1,
-        "max_calls_per_tool": 1,
         "next_step": "continue",
         "answer": "",
         "finish_reason": None,
@@ -88,15 +98,31 @@ def _state(
 def _runtime(
     events: list[AssistantDecisionEvent],
     *,
+    query: str = "Show me open work orders at PLANT-HCM",
+    descriptor: ToolDescriptor | None = None,
     result: dict[str, object] | None = None,
 ) -> Runtime[GraphContext]:
     invoker = ResultInvoker(result or {"tool_name": "unused"})
+    effective_descriptor = descriptor or ToolDescriptor(
+        name="get_work_orders",
+        description="test",
+        site_code_field="site_code",
+    )
     return cast(
         Runtime[GraphContext],
         SimpleNamespace(
             context=GraphContext(
                 brain=RecordingBrain(),
+                authorization_context=AuthorizationContext(
+                    user_id=uuid4(),
+                    roles=frozenset({RoleName.READ_ONLY_ANALYST}),
+                    global_scope=True,
+                ),
+                available_tools=(effective_descriptor,),
                 tool_invoker=invoker,
+                call_budget=ToolCallBudget(remaining_calls=1, max_calls_per_tool=1),
+                retrieved_context=AssembledContext(),
+                user_query=query,
                 conversation_id=CONVERSATION_ID,
                 decision_observer=events.append,
             )
@@ -109,7 +135,6 @@ async def test_deterministic_planning_emits_selected_decision_metadata() -> None
 
     await plan_action(
         _state(
-            "Show me open work orders at PLANT-HCM",
             ToolDescriptor(
                 name="get_work_orders",
                 description="test",
@@ -139,10 +164,13 @@ async def test_model_planning_emits_confidence_without_rationale_or_payload() ->
 
     await plan_action(
         _state(
-            "Find current public maintenance guidance",
             ToolDescriptor(name="web_search", description="test"),
         ),
-        _runtime(events),
+        _runtime(
+            events,
+            query="Find current public maintenance guidance",
+            descriptor=ToolDescriptor(name="web_search", description="test"),
+        ),
     )
 
     event = events[0]
@@ -160,7 +188,6 @@ async def test_semantic_rejection_emits_stable_reason_code() -> None:
 
     await invoke_tool(
         _state(
-            "Show me open work orders at PLANT-HCM",
             ToolDescriptor(
                 name="get_work_orders",
                 description="test",
@@ -192,7 +219,6 @@ async def test_result_rejection_emits_allowed_precheck_then_blocked_result() -> 
 
     await invoke_tool(
         _state(
-            "Show me open work orders at PLANT-HCM",
             ToolDescriptor(
                 name="get_work_orders",
                 description="test",
@@ -219,7 +245,16 @@ def test_observer_failure_does_not_change_orchestration_behavior() -> None:
 
     context = GraphContext(
         brain=RecordingBrain(),
+        authorization_context=AuthorizationContext(
+            user_id=uuid4(),
+            roles=frozenset({RoleName.READ_ONLY_ANALYST}),
+            global_scope=True,
+        ),
+        available_tools=(),
         tool_invoker=ResultInvoker({"tool_name": "unused"}),
+        call_budget=ToolCallBudget(remaining_calls=0, max_calls_per_tool=0),
+        retrieved_context=AssembledContext(),
+        user_query="test",
         decision_observer=fail_observer,
     )
 

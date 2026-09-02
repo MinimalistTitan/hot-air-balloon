@@ -16,12 +16,16 @@ from app.modules.assistant.domain.value_object import OrchestrationFinishReason
 from app.modules.assistant.infrastructure.agents.langgraph.context import (
     DecisionObserver,
     GraphContext,
+    ToolCallBudget,
 )
 from app.modules.assistant.infrastructure.agents.langgraph.contracts import AgentBrain
 from app.modules.assistant.infrastructure.agents.langgraph.postgres_checkpointer import (
     PostgresCheckpointer,
 )
-from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState
+from app.modules.assistant.infrastructure.agents.langgraph.state import (
+    CURRENT_WORKFLOW_VERSION,
+    GraphState,
+)
 from app.modules.assistant.infrastructure.agents.langgraph.thread_identity import derive_thread_id
 from app.modules.assistant.infrastructure.agents.langgraph.workflow import build_workflow
 from app.modules.user.domain.authorization import AuthorizationContext
@@ -36,6 +40,7 @@ class CompiledWorkflow(Protocol):
         *,
         context: GraphContext | None = None,
     ) -> object: ...
+
 
 @dataclass(slots=True)
 class LangGraphAgentOrchestrator(AgentOrchestratorPort):
@@ -102,18 +107,11 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
             tool for tool in available_tools if tool.name in tool_policy.allowed_tool_names
         ]
         initial_state: GraphState = {
-            "user_query": user_query,
-            "context_prompt": context.render(),
-            "available_tools": allowed_tools,
-            "conversation_history": [],
+            "workflow_version": CURRENT_WORKFLOW_VERSION,
             "intent": "",
             "planned_action": {"action": "respond", "tool_name": "", "payload": {}},
             "pending_call": None,
             "tool_calls": [],
-            "total_tool_calls": 0,
-            "per_tool_calls": {},
-            "remaining_tool_calls": effective_max_tool_calls,
-            "max_calls_per_tool": tool_policy.max_calls_per_tool,
             "next_step": "respond",
             "answer": "",
             "finish_reason": None,
@@ -140,7 +138,15 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
             config=configuration,
             context=GraphContext(
                 brain=self.brain,
+                authorization_context=authorization_context,
+                available_tools=tuple(allowed_tools),
                 tool_invoker=tool_invoker,
+                call_budget=ToolCallBudget(
+                    remaining_calls=effective_max_tool_calls,
+                    max_calls_per_tool=tool_policy.max_calls_per_tool,
+                ),
+                retrieved_context=context,
+                user_query=user_query,
                 response_composer=self.response_composer,
                 conversation_id=conversation_id,
                 decision_observer=self.decision_observer,
@@ -152,11 +158,7 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
         finish_reason = result["finish_reason"] or OrchestrationFinishReason.FAILED
 
         tool_calls = result["tool_calls"]
-        evidence = tuple(
-            block
-            for tool_call in tool_calls
-            for block in tool_call.evidence
-        )
+        evidence = tuple(block for tool_call in tool_calls for block in tool_call.evidence)
 
         return AgentRunResult(
             answer=result["answer"] or "No answer generated.",

@@ -156,6 +156,14 @@ class UserMemoryErasePort(Protocol):
     async def erase_user_memory(self, owner_user_id: UUID) -> EraseUserMemoryResult: ...
 
 
+class CheckpointErasePort(Protocol):
+    async def erase_conversation(
+        self,
+        owner_user_id: UUID,
+        conversation_id: UUID,
+    ) -> None: ...
+
+
 class ConversationStorePort(Protocol):
     async def claim_or_validate(
         self,

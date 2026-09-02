@@ -18,6 +18,9 @@ from app.modules.assistant.application.ports import (
 )
 from app.modules.assistant.domain.ports.web_search import WebSearchPort
 from app.modules.assistant.domain.tool_call import ToolCallPolicy
+from app.modules.assistant.infrastructure.agents.langgraph.checkpoint_eraser import (
+    LangGraphCheckpointEraser,
+)
 from app.modules.assistant.infrastructure.agents.langgraph.postgres_checkpointer import (
     PostgresCheckpointer,
 )
@@ -169,7 +172,12 @@ class Container:
                 session_factory=session_factory,
                 retention_days=settings.short_term_retention_days,
                 assistant_conversation_retention_days=settings.assistant_conversation_retention_days,
-                purge_interval_seconds=(settings.short_term_retention_interval_seconds)
+                purge_interval_seconds=settings.short_term_retention_interval_seconds,
+                checkpoint_eraser=(
+                    LangGraphCheckpointEraser(effective_assistant_checkpointer)
+                    if effective_assistant_checkpointer is not None
+                    else None
+                ),
             )
         )
         if settings.long_term_memory_enabled:

@@ -4,7 +4,9 @@ from langgraph.runtime import Runtime
 
 
 async def classify_intent(
-	state: GraphState,
-	runtime: Runtime[GraphContext],
+    state: GraphState,
+    runtime: Runtime[GraphContext],
 ) -> dict[str, str]:
-	return {"intent": await runtime.context.brain.classify_intent(state)}
+    return {
+        "intent": await runtime.context.brain.classify_intent(runtime.context.agent_state(state))
+    }

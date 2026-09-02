@@ -7,7 +7,6 @@ from app.modules.assistant.infrastructure.agents.langgraph.context import GraphC
 from app.modules.assistant.infrastructure.agents.langgraph.decision_observability import (
     record_decision,
 )
-
 from app.modules.assistant.infrastructure.agents.langgraph.semantic_validation import (
     validate_tool_call_semantics,
 )
@@ -21,12 +20,8 @@ async def invoke_tool(
 ) -> dict[str, object]:
     action = state["planned_action"]
     tool_name = action["tool_name"]
-    callable_names = {tool.name for tool in state["available_tools"]}
-    can_call = (
-        state["remaining_tool_calls"] > 0
-        and tool_name in callable_names
-        and state["per_tool_calls"].get(tool_name, 0) < state["max_calls_per_tool"]
-    )
+    callable_names = {tool.name for tool in runtime.context.available_tools}
+    can_call = tool_name in callable_names and runtime.context.call_budget.can_call(tool_name)
     if not can_call:
         record_decision(
             runtime.context,
@@ -45,9 +40,9 @@ async def invoke_tool(
         }
 
     payload = dict(action["payload"])
-    descriptor = next(tool for tool in state["available_tools"] if tool.name == tool_name)
+    descriptor = next(tool for tool in runtime.context.available_tools if tool.name == tool_name)
     semantic_result = validate_tool_call_semantics(
-        query=state["user_query"],
+        query=runtime.context.user_query,
         descriptor=descriptor,
         payload=payload,
     )
@@ -98,8 +93,4 @@ async def invoke_tool(
             "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
         }
 
-    return {
-        "pending_call": tool_call
-    }
-
-
+    return {"pending_call": tool_call}

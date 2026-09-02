@@ -1,18 +1,31 @@
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 from langgraph.runtime import Runtime
 
-from app.modules.assistant.domain.entities import ToolCallRecord, ToolDescriptor
+from app.modules.assistant.domain.context import AssembledContext
+from app.modules.assistant.domain.entities import (
+    ToolCallRecord,
+    ToolDescriptor,
+    ToolOutcomeStatus,
+)
 from app.modules.assistant.domain.value_object import OrchestrationFinishReason
-from app.modules.assistant.infrastructure.agents.langgraph.context import GraphContext
+from app.modules.assistant.infrastructure.agents.langgraph.context import (
+    GraphContext,
+    ToolCallBudget,
+)
 from app.modules.assistant.infrastructure.agents.langgraph.nodes.tool_call import invoke_tool
 from app.modules.assistant.infrastructure.agents.langgraph.semantic_validation import (
     SemanticRejectionReason,
     validate_tool_call_semantics,
 )
-from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState
+from app.modules.assistant.infrastructure.agents.langgraph.state import (
+    CURRENT_WORKFLOW_VERSION,
+    GraphState,
+)
+from app.modules.user.domain.authorization import AuthorizationContext, RoleName
 
 
 def _descriptor(
@@ -192,22 +205,24 @@ class ToolInvokerSpy:
         self,
         tool_name: str,
         payload: dict[str, object],
-    ) -> dict[str, object]:
+    ) -> ToolCallRecord:
         self.calls.append((tool_name, payload))
-        return {"tool_name": tool_name, "work_orders": []}
+        return ToolCallRecord(
+            tool_name=tool_name,
+            payload=payload,
+            status=ToolOutcomeStatus.SUCCESS,
+            evidence=(),
+            result={"work_orders": []},
+        )
 
 
 def _state(
     *,
-    query: str,
     descriptor: ToolDescriptor,
     payload: dict[str, object],
 ) -> GraphState:
     return {
-        "user_query": query,
-        "context_prompt": "",
-        "available_tools": [descriptor],
-        "conversation_history": [],
+        "workflow_version": CURRENT_WORKFLOW_VERSION,
         "intent": "assistant_query",
         "planned_action": {
             "action": "tool_call",
@@ -216,35 +231,49 @@ def _state(
         },
         "pending_call": None,
         "tool_calls": [],
-        "total_tool_calls": 0,
-        "per_tool_calls": {},
-        "remaining_tool_calls": 1,
-        "max_calls_per_tool": 1,
         "next_step": "continue",
         "answer": "",
         "finish_reason": None,
     }
 
 
-def _runtime(invoker: ToolInvokerSpy) -> Runtime[GraphContext]:
+def _runtime(
+    invoker: ToolInvokerSpy,
+    *,
+    query: str,
+    descriptor: ToolDescriptor,
+) -> Runtime[GraphContext]:
     return cast(
         Runtime[GraphContext],
         SimpleNamespace(
-            context=SimpleNamespace(tool_invoker=invoker),
+            context=GraphContext(
+                brain=cast(Any, object()),
+                authorization_context=AuthorizationContext(
+                    user_id=uuid4(),
+                    roles=frozenset({RoleName.READ_ONLY_ANALYST}),
+                    global_scope=True,
+                ),
+                available_tools=(descriptor,),
+                tool_invoker=invoker,
+                call_budget=ToolCallBudget(remaining_calls=1, max_calls_per_tool=1),
+                retrieved_context=AssembledContext(),
+                user_query=query,
+            ),
         ),
     )
 
 
 async def test_tool_call_node_blocks_semantic_mismatch_before_invocation() -> None:
     invoker = ToolInvokerSpy()
+    query = "Show me open work orders at PLANT-HCM"
+    descriptor = _descriptor("get_work_orders", site_code_field="site_code")
 
     update = await invoke_tool(
         _state(
-            query="Show me open work orders at PLANT-HCM",
-            descriptor=_descriptor("get_work_orders", site_code_field="site_code"),
+            descriptor=descriptor,
             payload={"site_code": "PLANT-HN", "status": "open"},
         ),
-        _runtime(invoker),
+        _runtime(invoker, query=query, descriptor=descriptor),
     )
 
     assert update == {
@@ -256,17 +285,18 @@ async def test_tool_call_node_blocks_semantic_mismatch_before_invocation() -> No
 
 async def test_tool_call_node_blocks_unrequested_write_before_invocation() -> None:
     invoker = ToolInvokerSpy()
+    query = "Explain what a maintenance work order is. Do not use tools"
+    descriptor = _descriptor("write_work_order_status", is_mutating=True)
 
     update = await invoke_tool(
         _state(
-            query="Explain what a maintenance work order is. Do not use tools",
-            descriptor=_descriptor("write_work_order_status", is_mutating=True),
+            descriptor=descriptor,
             payload={
                 "work_order_code": "WO-HCM-0101",
                 "target_status": "completed",
             },
         ),
-        _runtime(invoker),
+        _runtime(invoker, query=query, descriptor=descriptor),
     )
 
     assert update["finish_reason"] is OrchestrationFinishReason.POLICY_BLOCKED
@@ -276,14 +306,15 @@ async def test_tool_call_node_blocks_unrequested_write_before_invocation() -> No
 async def test_tool_call_node_invokes_semantically_valid_call() -> None:
     invoker = ToolInvokerSpy()
     payload: dict[str, object] = {"site_code": "PLANT-HCM", "status": "open"}
+    query = "Show me open work orders at PLANT-HCM"
+    descriptor = _descriptor("get_work_orders", site_code_field="site_code")
 
     update = await invoke_tool(
         _state(
-            query="Show me open work orders at PLANT-HCM",
-            descriptor=_descriptor("get_work_orders", site_code_field="site_code"),
+            descriptor=descriptor,
             payload=payload,
         ),
-        _runtime(invoker),
+        _runtime(invoker, query=query, descriptor=descriptor),
     )
 
     assert invoker.calls == [("get_work_orders", payload)]

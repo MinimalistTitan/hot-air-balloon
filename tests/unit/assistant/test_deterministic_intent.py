@@ -1,17 +1,28 @@
 from types import SimpleNamespace
 from typing import cast
+from uuid import uuid4
 
 import pytest
 from langgraph.runtime import Runtime
 
-from app.modules.assistant.domain.entities import ToolDescriptor
-from app.modules.assistant.infrastructure.agents.langgraph.context import GraphContext
+from app.modules.assistant.domain.context import AssembledContext
+from app.modules.assistant.domain.entities import ToolCallRecord, ToolDescriptor
+from app.modules.assistant.infrastructure.agents.langgraph.context import (
+    GraphContext,
+    ToolCallBudget,
+)
 from app.modules.assistant.infrastructure.agents.langgraph.deterministic_intent import (
     DeterministicIntent,
     resolve_intent,
 )
 from app.modules.assistant.infrastructure.agents.langgraph.nodes.plan_action import plan_action
-from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState, PlannedAction
+from app.modules.assistant.infrastructure.agents.langgraph.state import (
+    CURRENT_WORKFLOW_VERSION,
+    AgentStateView,
+    GraphState,
+    PlannedAction,
+)
+from app.modules.user.domain.authorization import AuthorizationContext, RoleName
 
 
 @pytest.mark.parametrize(
@@ -109,10 +120,10 @@ class RecordingBrain:
     def __init__(self) -> None:
         self.plan_calls = 0
 
-    async def classify_intent(self, state: GraphState) -> str:
+    async def classify_intent(self, state: AgentStateView) -> str:
         return "assistant_query"
 
-    async def plan_action(self, state: GraphState) -> PlannedAction:
+    async def plan_action(self, state: AgentStateView) -> PlannedAction:
         self.plan_calls += 1
         return {
             "action": "tool_call",
@@ -120,44 +131,53 @@ class RecordingBrain:
             "payload": {},
         }
 
-    async def respond(self, state: GraphState) -> str:
+    async def respond(self, state: AgentStateView) -> str:
         return "response"
 
 
 async def _unused_tool_invoker(
     tool_name: str,
     payload: dict[str, object],
-) -> dict[str, object]:
+) -> ToolCallRecord:
     raise AssertionError(f"unexpected tool invocation: {tool_name} {payload}")
 
 
-def _state(query: str, tool_names: list[str]) -> GraphState:
+def _state() -> GraphState:
     return {
-        "user_query": query,
-        "context_prompt": "",
-        "available_tools": [
-            ToolDescriptor(name=tool_name, description="test") for tool_name in tool_names
-        ],
-        "conversation_history": [],
+        "workflow_version": CURRENT_WORKFLOW_VERSION,
         "intent": "assistant_query",
         "planned_action": {"action": "respond", "tool_name": "", "payload": {}},
         "pending_call": None,
         "tool_calls": [],
-        "total_tool_calls": 0,
-        "per_tool_calls": {},
-        "remaining_tool_calls": 1,
-        "max_calls_per_tool": 1,
         "next_step": "continue",
         "answer": "",
         "finish_reason": None,
     }
 
 
-def _runtime(brain: RecordingBrain) -> Runtime[GraphContext]:
+def _runtime(
+    brain: RecordingBrain,
+    query: str,
+    tool_names: list[str],
+) -> Runtime[GraphContext]:
     return cast(
         Runtime[GraphContext],
         SimpleNamespace(
-            context=GraphContext(brain=brain, tool_invoker=_unused_tool_invoker),
+            context=GraphContext(
+                brain=brain,
+                authorization_context=AuthorizationContext(
+                    user_id=uuid4(),
+                    roles=frozenset({RoleName.READ_ONLY_ANALYST}),
+                    global_scope=True,
+                ),
+                available_tools=tuple(
+                    ToolDescriptor(name=tool_name, description="test") for tool_name in tool_names
+                ),
+                tool_invoker=_unused_tool_invoker,
+                call_budget=ToolCallBudget(remaining_calls=1, max_calls_per_tool=1),
+                retrieved_context=AssembledContext(),
+                user_query=query,
+            ),
         ),
     )
 
@@ -166,8 +186,12 @@ async def test_plan_action_routes_recognized_intent_without_calling_llm() -> Non
     brain = RecordingBrain()
 
     update = await plan_action(
-        _state("Show me open work orders at PLANT-HCM", ["get_work_orders", "wrong_tool"]),
-        _runtime(brain),
+        _state(),
+        _runtime(
+            brain,
+            "Show me open work orders at PLANT-HCM",
+            ["get_work_orders", "wrong_tool"],
+        ),
     )
 
     assert update["planned_action"] == {
@@ -182,8 +206,8 @@ async def test_plan_action_does_not_substitute_when_required_tool_is_unavailable
     brain = RecordingBrain()
 
     update = await plan_action(
-        _state("Show me open work orders at PLANT-HCM", ["wrong_tool"]),
-        _runtime(brain),
+        _state(),
+        _runtime(brain, "Show me open work orders at PLANT-HCM", ["wrong_tool"]),
     )
 
     assert update["planned_action"] == {
@@ -198,8 +222,8 @@ async def test_plan_action_honors_explicit_no_tool_instruction() -> None:
     brain = RecordingBrain()
 
     update = await plan_action(
-        _state("Explain a work order. Don't use any tools", ["wrong_tool"]),
-        _runtime(brain),
+        _state(),
+        _runtime(brain, "Explain a work order. Don't use any tools", ["wrong_tool"]),
     )
 
     assert update["planned_action"]["action"] == "respond"
@@ -210,8 +234,8 @@ async def test_plan_action_uses_llm_fallback_for_unrecognized_query() -> None:
     brain = RecordingBrain()
 
     update = await plan_action(
-        _state("Help me with maintenance", ["wrong_tool"]),
-        _runtime(brain),
+        _state(),
+        _runtime(brain, "Help me with maintenance", ["wrong_tool"]),
     )
 
     assert update["planned_action"]["tool_name"] == "wrong_tool"

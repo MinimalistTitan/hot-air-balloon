@@ -8,8 +8,10 @@ from langchain_openai import ChatOpenAI
 from app.modules.assistant.infrastructure.agents.langgraph.deterministic_intent import (
     resolve_intent,
 )
-
-from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState, PlannedAction
+from app.modules.assistant.infrastructure.agents.langgraph.state import (
+    AgentStateView,
+    PlannedAction,
+)
 from app.modules.assistant.infrastructure.agents.structured_decision import (
     MIN_TOOL_DECISION_CONFIDENCE,
     AgentDecision,
@@ -23,11 +25,11 @@ class AgentBrain:
 
     llm: ChatOpenAI
 
-    async def classify_intent(self, state: GraphState) -> str:
+    async def classify_intent(self, state: AgentStateView) -> str:
         resolution = resolve_intent(state["user_query"])
         return resolution.intent.value if resolution is not None else "assistant_query"
 
-    async def plan_action(self, state: GraphState) -> PlannedAction:
+    async def plan_action(self, state: AgentStateView) -> PlannedAction:
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -80,11 +82,7 @@ class AgentBrain:
                     default=str,
                 ),
                 "evidence_json": json.dumps(
-                    [
-                        asdict(block)
-                        for call in state["tool_calls"]
-                        for block in call.evidence
-                    ],
+                    [asdict(block) for call in state["tool_calls"] for block in call.evidence],
                     default=str,
                 ),
                 "remaining_tool_calls": state["remaining_tool_calls"],
@@ -97,11 +95,9 @@ class AgentBrain:
         )
         return planned_action_from_decision(decision)
 
-    async def respond(self, state: GraphState) -> str:
+    async def respond(self, state: AgentStateView) -> str:
         if state["tool_calls"]:
-            raise RuntimeError(
-                "tool-backed responses must use FinalResponseComposer"
-            )
+            raise RuntimeError("tool-backed responses must use FinalResponseComposer")
 
         prompt = ChatPromptTemplate.from_messages(
             [

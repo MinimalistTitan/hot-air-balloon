@@ -5,25 +5,38 @@ from uuid import uuid4
 from langgraph.runtime import Runtime
 
 from app.modules.assistant.domain.context import AssembledContext, ContextBlock, ContextKind
-from app.modules.assistant.domain.entities import ToolDescriptor
+from app.modules.assistant.domain.entities import (
+    ToolCallRecord,
+    ToolDescriptor,
+    ToolOutcomeStatus,
+)
 from app.modules.assistant.domain.tool_call import ToolCallPolicy
 from app.modules.assistant.domain.value_object import OrchestrationFinishReason
-from app.modules.assistant.infrastructure.agents.langgraph.context import GraphContext
+from app.modules.assistant.infrastructure.agents.langgraph.context import (
+    GraphContext,
+    ToolCallBudget,
+)
 from app.modules.assistant.infrastructure.agents.langgraph.nodes.respond import (
     respond as respond_node,
 )
 from app.modules.assistant.infrastructure.agents.langgraph.orchestrator import (
     LangGraphAgentOrchestrator,
 )
-from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState, PlannedAction
+from app.modules.assistant.infrastructure.agents.langgraph.state import (
+    CURRENT_WORKFLOW_VERSION,
+    AgentStateView,
+    GraphState,
+    PlannedAction,
+)
 from app.modules.user.domain.authorization import AuthorizationContext, RoleName
+from app.shared.kernel.response_evidence import MutationEvidence
 
 
 class FakeBrain:
-    async def classify_intent(self, state: GraphState) -> str:
+    async def classify_intent(self, state: AgentStateView) -> str:
         return "asset_status"
 
-    async def plan_action(self, state: GraphState) -> PlannedAction:
+    async def plan_action(self, state: AgentStateView) -> PlannedAction:
         if not state["tool_calls"]:
             return {
                 "action": "tool_call",
@@ -32,7 +45,7 @@ class FakeBrain:
             }
         return {"action": "respond", "tool_name": "", "payload": {}}
 
-    async def respond(self, state: GraphState) -> str:
+    async def respond(self, state: AgentStateView) -> str:
         return f"Asset is {state['tool_calls'][0].result['status']}."
 
 
@@ -48,12 +61,23 @@ async def test_orchestrator_runs_tool_loop_and_returns_trace() -> None:
     async def invoke_tool(
         tool_name: str,
         payload: dict[str, object],
-    ) -> dict[str, object]:
-        return {
-            "tool_name": tool_name,
-            "asset_id": payload["asset_id"],
-            "status": "available",
-        }
+    ) -> ToolCallRecord:
+        return ToolCallRecord(
+            tool_name=tool_name,
+            payload=payload,
+            status=ToolOutcomeStatus.SUCCESS,
+            evidence=(
+                MutationEvidence(
+                    evidence_id="asset-A-1",
+                    entity_label="asset",
+                    entity_id="A-1",
+                    previous_state=None,
+                    current_state="available",
+                    changed=False,
+                ),
+            ),
+            result={"asset_id": payload["asset_id"], "status": "available"},
+        )
 
     result = await LangGraphAgentOrchestrator(
         brain=FakeBrain(),
@@ -74,7 +98,7 @@ async def test_orchestrator_runs_tool_loop_and_returns_trace() -> None:
         allow_tool_calls=True,
     )
 
-    assert result.answer == "Asset is available."
+    assert result.answer == "Asset A-1 is already available."
     assert result.finish_reason.value == "completed"
     assert result.tool_calls[0].tool_name == "asset_status"
     assert result.tool_calls[0].result == {"asset_id": "A-1", "status": "available"}
@@ -85,19 +109,19 @@ class RecordingBrain:
         self.answers_seen_in_respond: list[str] = []
         self.contexts_seen_in_respond: list[str] = []
 
-    async def classify_intent(self, state: GraphState) -> str:
+    async def classify_intent(self, state: AgentStateView) -> str:
         return "assistant_query"
 
-    async def plan_action(self, state: GraphState) -> PlannedAction:
+    async def plan_action(self, state: AgentStateView) -> PlannedAction:
         return {"action": "respond", "tool_name": "", "payload": {}}
 
-    async def respond(self, state: GraphState) -> str:
+    async def respond(self, state: AgentStateView) -> str:
         self.answers_seen_in_respond.append(state["answer"])
         self.contexts_seen_in_respond.append(state["context_prompt"])
         return "Fresh answer for the current query."
 
 
-async def _fail_invoker(tool_name: str, payload: dict[str, object]) -> dict[str, object]:
+async def _fail_invoker(tool_name: str, payload: dict[str, object]) -> ToolCallRecord:
     raise AssertionError(f"tool_invoker must not be called, got {tool_name}")
 
 
@@ -121,18 +145,11 @@ def _respond_state(
     finish_reason: OrchestrationFinishReason | None,
 ) -> GraphState:
     return {
-        "user_query": "Explain what a maintenance work order is in one sentence",
-        "context_prompt": "SENTINEL-CONTEXT",
-        "available_tools": [],
-        "conversation_history": [],
+        "workflow_version": CURRENT_WORKFLOW_VERSION,
         "intent": "assistant_query",
         "planned_action": {"action": "respond", "tool_name": "", "payload": {}},
         "pending_call": None,
         "tool_calls": [],
-        "total_tool_calls": 0,
-        "per_tool_calls": {},
-        "remaining_tool_calls": 0,
-        "max_calls_per_tool": 1,
         "next_step": "respond",
         "answer": answer,
         "finish_reason": finish_reason,
@@ -143,7 +160,15 @@ def _runtime(brain: RecordingBrain) -> Runtime[GraphContext]:
     return cast(
         Runtime[GraphContext],
         SimpleNamespace(
-            context=GraphContext(brain=brain, tool_invoker=_fail_invoker),
+            context=GraphContext(
+                brain=brain,
+                authorization_context=_authorization_context(),
+                available_tools=(),
+                tool_invoker=_fail_invoker,
+                call_budget=ToolCallBudget(remaining_calls=0, max_calls_per_tool=0),
+                retrieved_context=_context_with_sentinel("SENTINEL-CONTEXT"),
+                user_query="Explain what a maintenance work order is in one sentence",
+            ),
         ),
     )
 

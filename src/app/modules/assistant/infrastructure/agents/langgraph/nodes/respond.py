@@ -14,17 +14,13 @@ async def respond(
         return {}
 
     if state["tool_calls"]:
-        evidence = tuple(
-            block
-            for call in state["tool_calls"]
-            for block in call.evidence
-        )
+        evidence = tuple(block for call in state["tool_calls"] for block in call.evidence)
         answer = runtime.context.response_composer.compose(
-            state["user_query"],
+            runtime.context.user_query,
             evidence,
         ).answer
     else:
-        answer = await runtime.context.brain.respond(state)
+        answer = await runtime.context.brain.respond(runtime.context.agent_state(state))
 
     update: dict[str, object] = {"answer": answer.strip() or "No answer generated."}
 
