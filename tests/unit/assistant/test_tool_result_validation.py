@@ -286,7 +286,6 @@ def _state() -> GraphState:
         "per_tool_calls": {},
         "remaining_tool_calls": 1,
         "max_calls_per_tool": 1,
-        "next_step": "continue",
         "answer": "",
         "finish_reason": None,
     }
@@ -309,10 +308,11 @@ async def test_tool_call_node_blocks_mismatched_result_before_observation() -> N
         )
     )
 
-    update = await invoke_tool(_state(), _runtime(invoker))
+    command = await invoke_tool(_state(), _runtime(invoker))
 
     assert invoker.calls == 1
-    assert update == {
+    assert command.goto == "respond"
+    assert command.update == {
         "answer": "Tool result blocked because it did not match the user's request.",
         "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
     }
@@ -322,9 +322,11 @@ async def test_tool_call_node_keeps_matching_result_for_observation() -> None:
     tool_result = _gateway_result()
     invoker = ResultInvoker(tool_result)
 
-    update = await invoke_tool(_state(), _runtime(invoker))
+    command = await invoke_tool(_state(), _runtime(invoker))
 
-    pending_call = update["pending_call"]
+    assert command.goto == "observe_result"
+    assert command.update is not None
+    pending_call = command.update["pending_call"]
     assert isinstance(pending_call, ToolCallRecord)
     assert pending_call.tool_name == "get_work_orders"
     assert pending_call.result == {

@@ -1,3 +1,5 @@
+from langchain_core.messages import AIMessage, HumanMessage
+
 from app.modules.assistant.domain.value_object import OrchestrationFinishReason
 from app.modules.assistant.infrastructure.agents.langgraph.context import GraphContext
 from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState
@@ -22,7 +24,14 @@ async def respond(
     else:
         answer = await runtime.context.brain.respond(runtime.context.agent_state(state))
 
-    update: dict[str, object] = {"answer": answer.strip() or "No answer generated."}
+    normalized_answer = answer.strip() or "No answer generated."
+    update: dict[str, object] = {
+        "answer": normalized_answer,
+        "messages": [
+            HumanMessage(content=runtime.context.user_query),
+            AIMessage(content=normalized_answer),
+        ],
+    }
 
     # Preserve an existing terminal reason instead of masking it as completed.
     if state["finish_reason"] is None:

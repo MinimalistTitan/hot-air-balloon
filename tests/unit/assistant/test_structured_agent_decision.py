@@ -25,6 +25,7 @@ def test_structured_respond_decision_has_mutually_exclusive_fields() -> None:
         "action": "respond",
         "tool_name": "",
         "payload": {},
+        "answer": "A maintenance work order records planned maintenance work.",
         "intent": "explain_work_order",
         "confidence": 0.97,
         "rationale": "The request asks for a definition, not ERP data.",

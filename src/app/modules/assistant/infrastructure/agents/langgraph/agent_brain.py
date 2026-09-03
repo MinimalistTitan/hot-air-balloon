@@ -50,6 +50,7 @@ class AgentBrain:
                         "User query:\n{user_query}\n\n"
                         "Intent:\n{intent}\n\n"
                         "Conversation history:\n{history_json}\n\n"
+                        "Assembled context:\n{context_prompt}\n\n"
                         "Callable tools:\n{tools_json}\n\n"
                         "Normalized evidence from completed calls:\n{evidence_json}\n\n"
                         "Remaining tool calls: {remaining_tool_calls}\n\n"
@@ -74,9 +75,10 @@ class AgentBrain:
                 "user_query": state["user_query"],
                 "intent": state["intent"],
                 "history_json": json.dumps(
-                    [asdict(turn) for turn in state["conversation_history"]],
+                    state["conversation_history"],
                     default=str,
                 ),
+                "context_prompt": state["context_prompt"],
                 "tools_json": json.dumps(
                     [asdict(tool) for tool in state["available_tools"]],
                     default=str,
@@ -112,6 +114,7 @@ class AgentBrain:
                     "human",
                     (
                         "User query:\n{user_query}\n\n"
+                        "Conversation history:\n{history_json}\n\n"
                         "Context:\n{context_prompt}\n\n"
                         "Produce a concise answer."
                     ),
@@ -127,6 +130,7 @@ class AgentBrain:
         raw_response = await chain.ainvoke(
             {
                 "user_query": state["user_query"],
+                "history_json": json.dumps(state["conversation_history"]),
                 "context_prompt": state["context_prompt"],
             }
         )
@@ -140,7 +144,7 @@ class AgentBrain:
 
 def planned_action_from_decision(decision: AgentDecision) -> PlannedAction:
     if decision.action == "respond" or decision.confidence < MIN_TOOL_DECISION_CONFIDENCE:
-        return {
+        action: PlannedAction = {
             "action": "respond",
             "tool_name": "",
             "payload": {},
@@ -148,12 +152,15 @@ def planned_action_from_decision(decision: AgentDecision) -> PlannedAction:
             "confidence": decision.confidence,
             "rationale": decision.rationale,
         }
+        if decision.action == "respond":
+            action["answer"] = decision.response_text()
+        return action
     tool_name, payload = decision.tool_call()
-    return {
-        "action": "tool_call",
-        "tool_name": tool_name,
-        "payload": payload,
-        "intent": decision.intent,
-        "confidence": decision.confidence,
-        "rationale": decision.rationale,
-    }
+    return PlannedAction(
+        action="tool_call",
+        tool_name=tool_name,
+        payload=payload,
+        intent=decision.intent,
+        confidence=decision.confidence,
+        rationale=decision.rationale,
+    )

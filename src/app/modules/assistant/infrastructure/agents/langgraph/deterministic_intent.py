@@ -65,7 +65,7 @@ _LIMIT_PATTERN = re.compile(
 )
 _WORK_ORDER_CODE_PATTERN = re.compile(r"\bWO-[A-Z0-9]+(?:-[A-Z0-9]+)*\b", re.IGNORECASE)
 _RETRIEVAL_PATTERN = re.compile(
-    r"\b(?:show|list|find|get|fetch|retrieve|display|give\s+me|which|what\s+are)\b",
+    r"\b(?:show|list|find|get|fetch|retrieve|display|give\s+me)\b",
     re.IGNORECASE,
 )
 _DUE_SCHEDULE_PATTERN = re.compile(

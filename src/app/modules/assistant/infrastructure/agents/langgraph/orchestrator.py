@@ -108,11 +108,15 @@ class LangGraphAgentOrchestrator(AgentOrchestratorPort):
         ]
         initial_state: GraphState = {
             "workflow_version": CURRENT_WORKFLOW_VERSION,
+            "messages": [],
+            "working_set": {
+                "active_intent": None,
+                "referenced_entities": [],
+            },
             "intent": "",
             "planned_action": {"action": "respond", "tool_name": "", "payload": {}},
             "pending_call": None,
             "tool_calls": [],
-            "next_step": "respond",
             "answer": "",
             "finish_reason": None,
         }

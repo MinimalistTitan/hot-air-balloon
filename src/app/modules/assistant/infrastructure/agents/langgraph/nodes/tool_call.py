@@ -1,3 +1,5 @@
+from typing import Literal
+
 from app.modules.assistant.domain.entities import (
     DecisionOutcome,
     DecisionStage,
@@ -12,12 +14,15 @@ from app.modules.assistant.infrastructure.agents.langgraph.semantic_validation i
 )
 from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState
 from langgraph.runtime import Runtime
+from langgraph.types import Command
+
+ToolCallDestination = Literal["observe_result", "respond"]
 
 
 async def invoke_tool(
     state: GraphState,
     runtime: Runtime[GraphContext],
-) -> dict[str, object]:
+) -> Command[ToolCallDestination]:
     action = state["planned_action"]
     tool_name = action["tool_name"]
     callable_names = {tool.name for tool in runtime.context.available_tools}
@@ -34,10 +39,13 @@ async def invoke_tool(
             tool_name=tool_name or None,
             reason_code="tool_call_policy",
         )
-        return {
-            "answer": "Tool call blocked by policy.",
-            "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
-        }
+        return Command(
+            update={
+                "answer": "Tool call blocked by policy.",
+                "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
+            },
+            goto="respond",
+        )
 
     payload = dict(action["payload"])
     descriptor = next(tool for tool in runtime.context.available_tools if tool.name == tool_name)
@@ -58,10 +66,13 @@ async def invoke_tool(
             tool_name=tool_name,
             reason_code=(semantic_result.reason.value if semantic_result.reason else "unknown"),
         )
-        return {
-            "answer": "Tool call blocked because it did not match the user's request.",
-            "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
-        }
+        return Command(
+            update={
+                "answer": "Tool call blocked because it did not match the user's request.",
+                "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
+            },
+            goto="respond",
+        )
 
     record_decision(
         runtime.context,
@@ -88,9 +99,12 @@ async def invoke_tool(
     tool_call = await runtime.context.tool_invoker(tool_name, payload)
 
     if tool_call.tool_name != tool_name:
-        return {
-            "answer": "Tool call result blocked because its identity was invalid.",
-            "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
-        }
+        return Command(
+            update={
+                "answer": "Tool call result blocked because its identity was invalid.",
+                "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
+            },
+            goto="respond",
+        )
 
-    return {"pending_call": tool_call}
+    return Command(update={"pending_call": tool_call}, goto="observe_result")

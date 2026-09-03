@@ -146,11 +146,12 @@ def _respond_state(
 ) -> GraphState:
     return {
         "workflow_version": CURRENT_WORKFLOW_VERSION,
+        "messages": [],
+        "working_set": {"active_intent": None, "referenced_entities": []},
         "intent": "assistant_query",
         "planned_action": {"action": "respond", "tool_name": "", "payload": {}},
         "pending_call": None,
         "tool_calls": [],
-        "next_step": "respond",
         "answer": answer,
         "finish_reason": finish_reason,
     }

@@ -15,6 +15,9 @@ from app.modules.assistant.infrastructure.agents.langgraph.deterministic_intent 
     DeterministicIntent,
     resolve_intent,
 )
+from app.modules.assistant.infrastructure.agents.langgraph.nodes.decide_next_step import (
+    decide_next_step,
+)
 from app.modules.assistant.infrastructure.agents.langgraph.nodes.plan_action import plan_action
 from app.modules.assistant.infrastructure.agents.langgraph.state import (
     CURRENT_WORKFLOW_VERSION,
@@ -145,11 +148,12 @@ async def _unused_tool_invoker(
 def _state() -> GraphState:
     return {
         "workflow_version": CURRENT_WORKFLOW_VERSION,
+        "messages": [],
+        "working_set": {"active_intent": None, "referenced_entities": []},
         "intent": "assistant_query",
         "planned_action": {"action": "respond", "tool_name": "", "payload": {}},
         "pending_call": None,
         "tool_calls": [],
-        "next_step": "continue",
         "answer": "",
         "finish_reason": None,
     }
@@ -185,7 +189,7 @@ def _runtime(
 async def test_plan_action_routes_recognized_intent_without_calling_llm() -> None:
     brain = RecordingBrain()
 
-    update = await plan_action(
+    command = await plan_action(
         _state(),
         _runtime(
             brain,
@@ -194,7 +198,9 @@ async def test_plan_action_routes_recognized_intent_without_calling_llm() -> Non
         ),
     )
 
-    assert update["planned_action"] == {
+    assert command.goto == "tool_call"
+    assert command.update is not None
+    assert command.update["planned_action"] == {
         "action": "tool_call",
         "tool_name": "get_work_orders",
         "payload": {"site_code": "PLANT-HCM", "status": "open"},
@@ -205,12 +211,14 @@ async def test_plan_action_routes_recognized_intent_without_calling_llm() -> Non
 async def test_plan_action_does_not_substitute_when_required_tool_is_unavailable() -> None:
     brain = RecordingBrain()
 
-    update = await plan_action(
+    command = await plan_action(
         _state(),
         _runtime(brain, "Show me open work orders at PLANT-HCM", ["wrong_tool"]),
     )
 
-    assert update["planned_action"] == {
+    assert command.goto == "respond"
+    assert command.update is not None
+    assert command.update["planned_action"] == {
         "action": "respond",
         "tool_name": "",
         "payload": {},
@@ -221,22 +229,46 @@ async def test_plan_action_does_not_substitute_when_required_tool_is_unavailable
 async def test_plan_action_honors_explicit_no_tool_instruction() -> None:
     brain = RecordingBrain()
 
-    update = await plan_action(
+    command = await plan_action(
         _state(),
         _runtime(brain, "Explain a work order. Don't use any tools", ["wrong_tool"]),
     )
 
-    assert update["planned_action"]["action"] == "respond"
+    assert command.goto == "respond"
+    assert command.update is not None
+    assert command.update["planned_action"]["action"] == "respond"
     assert brain.plan_calls == 0
 
 
 async def test_plan_action_uses_llm_fallback_for_unrecognized_query() -> None:
     brain = RecordingBrain()
 
-    update = await plan_action(
+    command = await plan_action(
         _state(),
         _runtime(brain, "Help me with maintenance", ["wrong_tool"]),
     )
 
-    assert update["planned_action"]["tool_name"] == "wrong_tool"
+    assert command.goto == "tool_call"
+    assert command.update is not None
+    assert command.update["planned_action"]["tool_name"] == "wrong_tool"
     assert brain.plan_calls == 1
+
+
+async def test_decide_next_step_commands_another_plan_when_budget_remains() -> None:
+    command = await decide_next_step(
+        _state(),
+        _runtime(RecordingBrain(), "Help me with maintenance", ["wrong_tool"]),
+    )
+
+    assert command.goto == "plan_action"
+    assert command.update is None
+
+
+async def test_decide_next_step_commands_response_when_budget_is_exhausted() -> None:
+    runtime = _runtime(RecordingBrain(), "Help me with maintenance", ["wrong_tool"])
+    runtime.context.call_budget.remaining_calls = 0
+
+    command = await decide_next_step(_state(), runtime)
+
+    assert command.goto == "respond"
+    assert command.update is None

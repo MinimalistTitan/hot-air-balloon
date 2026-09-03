@@ -1,5 +1,8 @@
 from app.modules.assistant.infrastructure.agents.langgraph.context import GraphContext
-from app.modules.assistant.infrastructure.agents.langgraph.state import GraphState
+from app.modules.assistant.infrastructure.agents.langgraph.state import (
+    GraphState,
+    working_set_entities,
+)
 from langgraph.runtime import Runtime
 
 
@@ -15,4 +18,8 @@ async def observe_result(
     return {
         "pending_call": None,
         "tool_calls": [*state["tool_calls"], pending_call],
+        "working_set": {
+            "active_intent": state["working_set"]["active_intent"],
+            "referenced_entities": working_set_entities(pending_call.payload),
+        },
     }

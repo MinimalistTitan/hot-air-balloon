@@ -1,5 +1,7 @@
 from uuid import UUID
 
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.modules.assistant.domain.context import AssembledContext, ContextBlock, ContextKind
@@ -14,8 +16,10 @@ from app.modules.assistant.infrastructure.agents.langgraph.orchestrator import (
 )
 from app.modules.assistant.infrastructure.agents.langgraph.state import (
     CURRENT_WORKFLOW_VERSION,
+    MAX_WORKING_SET_ENTITIES,
     AgentStateView,
     PlannedAction,
+    merge_working_sets,
 )
 from app.modules.assistant.infrastructure.agents.langgraph.thread_identity import derive_thread_id
 from app.modules.user.domain.authorization import AuthorizationContext, RoleName
@@ -56,6 +60,32 @@ def _authorization() -> AuthorizationContext:
         roles=frozenset({RoleName.READ_ONLY_ANALYST}),
         global_scope=True,
     )
+
+
+def test_working_set_merge_is_deduplicated_and_bounded() -> None:
+    merged = merge_working_sets(
+        {
+            "active_intent": "old_intent",
+            "referenced_entities": [
+                {"kind": "asset", "identifier": f"A-{index}"}
+                for index in range(MAX_WORKING_SET_ENTITIES)
+            ],
+        },
+        {
+            "active_intent": "new_intent",
+            "referenced_entities": [
+                {"kind": "asset", "identifier": "A-31"},
+                {"kind": "asset", "identifier": "A-32"},
+            ],
+        },
+    )
+
+    assert merged["active_intent"] == "new_intent"
+    assert len(merged["referenced_entities"]) == MAX_WORKING_SET_ENTITIES
+    assert merged["referenced_entities"][-1] == {
+        "kind": "asset",
+        "identifier": "A-32",
+    }
 
 
 async def test_checkpoint_contains_only_durable_application_channels() -> None:
@@ -108,6 +138,15 @@ async def test_checkpoint_contains_only_durable_application_channels() -> None:
     assert checkpoint is not None
     channel_values = checkpoint["channel_values"]
     assert channel_values["workflow_version"] == CURRENT_WORKFLOW_VERSION
+    messages = channel_values["messages"]
+    assert [(type(message), message.content) for message in messages] == [
+        (HumanMessage, query),
+        (AIMessage, "Transient response"),
+    ]
+    assert channel_values["working_set"] == {
+        "active_intent": "assistant_query",
+        "referenced_entities": [],
+    }
     assert {
         "intent",
         "planned_action",
@@ -123,7 +162,7 @@ async def test_checkpoint_contains_only_durable_application_channels() -> None:
     }.isdisjoint(channel_values)
 
     serialized_checkpoint = repr(checkpoint)
-    assert query not in serialized_checkpoint
+    assert query in serialized_checkpoint
     assert sentinel_context not in serialized_checkpoint
     assert tool_name not in serialized_checkpoint
     assert str(OWNER_ID) not in serialized_checkpoint
@@ -132,6 +171,56 @@ async def test_checkpoint_contains_only_durable_application_channels() -> None:
     assert brain.states[-1]["user_query"] == query
     assert sentinel_context in brain.states[-1]["context_prompt"]
     assert brain.states[-1]["available_tools"][0].name == tool_name
+
+
+async def test_messages_are_live_cross_turn_memory_without_input_replay() -> None:
+    saver = InMemorySaver()
+    brain = RecordingDirectResponseBrain()
+    orchestrator = LangGraphAgentOrchestrator(
+        brain=brain,
+        model_name="test-model",
+        checkpointer=saver,
+    )
+
+    for query in ("First turn", "Second turn"):
+        await orchestrator.run(
+            conversation_id=CONVERSATION_ID,
+            authorization_context=_authorization(),
+            user_query=query,
+            available_tools=[],
+            tool_invoker=_fail_invoker,
+            context=AssembledContext(),
+            tool_policy=ToolCallPolicy(
+                allowed_tool_names=frozenset(),
+                max_total_calls=0,
+                max_calls_per_tool=0,
+            ),
+            max_tool_calls=0,
+            allow_tool_calls=False,
+        )
+
+    checkpoint = await saver.aget(
+        {
+            "configurable": {
+                "thread_id": derive_thread_id(
+                    owner_user_id=OWNER_ID,
+                    conversation_id=CONVERSATION_ID,
+                )
+            }
+        }
+    )
+    assert checkpoint is not None
+    messages = checkpoint["channel_values"]["messages"]
+    assert [(message.type, message.content) for message in messages] == [
+        ("human", "First turn"),
+        ("ai", "Transient response"),
+        ("human", "Second turn"),
+        ("ai", "Transient response"),
+    ]
+    assert brain.states[-1]["conversation_history"] == [
+        {"role": "user", "content": "First turn"},
+        {"role": "assistant", "content": "Transient response"},
+    ]
 
 
 class OneToolBrain:
@@ -144,12 +233,57 @@ class OneToolBrain:
         return {
             "action": "tool_call",
             "tool_name": "lookup",
-            "payload": {"id": "A-1"},
+            "payload": {"asset_id": "A-1"},
         }
 
     async def respond(self, state: AgentStateView) -> str:
         del state
         raise AssertionError("Tool evidence must use the deterministic composer")
+
+
+class FailingResponseBrain(RecordingDirectResponseBrain):
+    async def respond(self, state: AgentStateView) -> str:
+        del state
+        raise RuntimeError("response generation failed")
+
+
+async def test_failed_turn_does_not_append_partial_message_history() -> None:
+    saver = InMemorySaver()
+    orchestrator = LangGraphAgentOrchestrator(
+        brain=FailingResponseBrain(),
+        model_name="test-model",
+        checkpointer=saver,
+    )
+
+    with pytest.raises(RuntimeError, match="response generation failed"):
+        await orchestrator.run(
+            conversation_id=CONVERSATION_ID,
+            authorization_context=_authorization(),
+            user_query="Incomplete turn",
+            available_tools=[],
+            tool_invoker=_fail_invoker,
+            context=AssembledContext(),
+            tool_policy=ToolCallPolicy(
+                allowed_tool_names=frozenset(),
+                max_total_calls=0,
+                max_calls_per_tool=0,
+            ),
+            max_tool_calls=0,
+            allow_tool_calls=False,
+        )
+
+    checkpoint = await saver.aget(
+        {
+            "configurable": {
+                "thread_id": derive_thread_id(
+                    owner_user_id=OWNER_ID,
+                    conversation_id=CONVERSATION_ID,
+                )
+            }
+        }
+    )
+    assert checkpoint is not None
+    assert checkpoint["channel_values"].get("messages", []) == []
 
 
 async def test_raw_tool_result_and_call_budget_are_not_checkpointed() -> None:
@@ -209,6 +343,10 @@ async def test_raw_tool_result_and_call_budget_are_not_checkpointed() -> None:
     )
     assert checkpoint is not None
     assert raw_result_marker not in repr(checkpoint)
+    assert checkpoint["channel_values"]["working_set"] == {
+        "active_intent": "lookup",
+        "referenced_entities": [{"kind": "asset_id", "identifier": "A-1"}],
+    }
     checkpoint_history = [
         item
         async for item in saver.alist(

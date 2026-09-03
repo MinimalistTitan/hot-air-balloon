@@ -223,6 +223,8 @@ def _state(
 ) -> GraphState:
     return {
         "workflow_version": CURRENT_WORKFLOW_VERSION,
+        "messages": [],
+        "working_set": {"active_intent": None, "referenced_entities": []},
         "intent": "assistant_query",
         "planned_action": {
             "action": "tool_call",
@@ -231,7 +233,6 @@ def _state(
         },
         "pending_call": None,
         "tool_calls": [],
-        "next_step": "continue",
         "answer": "",
         "finish_reason": None,
     }
@@ -268,7 +269,7 @@ async def test_tool_call_node_blocks_semantic_mismatch_before_invocation() -> No
     query = "Show me open work orders at PLANT-HCM"
     descriptor = _descriptor("get_work_orders", site_code_field="site_code")
 
-    update = await invoke_tool(
+    command = await invoke_tool(
         _state(
             descriptor=descriptor,
             payload={"site_code": "PLANT-HN", "status": "open"},
@@ -276,7 +277,8 @@ async def test_tool_call_node_blocks_semantic_mismatch_before_invocation() -> No
         _runtime(invoker, query=query, descriptor=descriptor),
     )
 
-    assert update == {
+    assert command.goto == "respond"
+    assert command.update == {
         "answer": "Tool call blocked because it did not match the user's request.",
         "finish_reason": OrchestrationFinishReason.POLICY_BLOCKED,
     }
@@ -288,7 +290,7 @@ async def test_tool_call_node_blocks_unrequested_write_before_invocation() -> No
     query = "Explain what a maintenance work order is. Do not use tools"
     descriptor = _descriptor("write_work_order_status", is_mutating=True)
 
-    update = await invoke_tool(
+    command = await invoke_tool(
         _state(
             descriptor=descriptor,
             payload={
@@ -299,7 +301,9 @@ async def test_tool_call_node_blocks_unrequested_write_before_invocation() -> No
         _runtime(invoker, query=query, descriptor=descriptor),
     )
 
-    assert update["finish_reason"] is OrchestrationFinishReason.POLICY_BLOCKED
+    assert command.goto == "respond"
+    assert command.update is not None
+    assert command.update["finish_reason"] is OrchestrationFinishReason.POLICY_BLOCKED
     assert invoker.calls == []
 
 
@@ -309,7 +313,7 @@ async def test_tool_call_node_invokes_semantically_valid_call() -> None:
     query = "Show me open work orders at PLANT-HCM"
     descriptor = _descriptor("get_work_orders", site_code_field="site_code")
 
-    update = await invoke_tool(
+    command = await invoke_tool(
         _state(
             descriptor=descriptor,
             payload=payload,
@@ -318,7 +322,9 @@ async def test_tool_call_node_invokes_semantically_valid_call() -> None:
     )
 
     assert invoker.calls == [("get_work_orders", payload)]
-    pending_call = update["pending_call"]
+    assert command.goto == "observe_result"
+    assert command.update is not None
+    pending_call = command.update["pending_call"]
     assert isinstance(pending_call, ToolCallRecord)
     assert pending_call.tool_name == "get_work_orders"
     assert pending_call.payload == payload

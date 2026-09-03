@@ -2,7 +2,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from app.modules.assistant.application.ports import ConversationTurn, ToolInvoker
+from langchain_core.messages import AIMessage, HumanMessage
+
+from app.modules.assistant.application.ports import ToolInvoker
 from app.modules.assistant.application.response_composer import FinalResponseComposer
 from app.modules.assistant.domain.context import AssembledContext
 from app.modules.assistant.domain.entities import AssistantDecisionEvent, ToolDescriptor
@@ -46,7 +48,6 @@ class GraphContext:
     call_budget: ToolCallBudget
     retrieved_context: AssembledContext
     user_query: str
-    conversation_history: tuple[ConversationTurn, ...] = ()
     response_composer: FinalResponseComposer = field(default_factory=FinalResponseComposer)
     conversation_id: UUID | None = None
     decision_observer: DecisionObserver | None = None
@@ -63,7 +64,14 @@ class GraphContext:
             "available_tools": list(
                 self.available_tools if available_tools is None else available_tools
             ),
-            "conversation_history": list(self.conversation_history),
+            "conversation_history": [
+                {
+                    "role": "user" if isinstance(message, HumanMessage) else "assistant",
+                    "content": str(message.content),
+                }
+                for message in state["messages"]
+                if isinstance(message, HumanMessage | AIMessage)
+            ],
             "intent": state["intent"],
             "planned_action": state["planned_action"],
             "pending_call": state["pending_call"],
@@ -72,7 +80,6 @@ class GraphContext:
             "per_tool_calls": dict(self.call_budget.per_tool_calls),
             "remaining_tool_calls": self.call_budget.remaining_calls,
             "max_calls_per_tool": self.call_budget.max_calls_per_tool,
-            "next_step": state["next_step"],
             "answer": state["answer"],
             "finish_reason": state["finish_reason"],
         }

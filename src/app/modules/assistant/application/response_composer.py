@@ -55,7 +55,13 @@ class FinalResponseComposer:
         if block.requested_count is not None and count < block.requested_count:
             header += f", fewer than the {block.requested_count} requested"
 
-        rows = [f"{index}. {item.label}" for index, item in enumerate(block.items, start=1)]
+        rows = []
+        for index, item in enumerate(block.items, start=1):
+            row = f"{index}. {item.label}"
+            if item.fields:
+                field_strs = [f"{f.label}: {f.value}" for f in item.fields]
+                row += " (" + ", ".join(field_strs) + ")"
+            rows.append(row)
         return f"{header}:\n" + "\n".join(rows)
 
     def _mutation(self, block: MutationEvidence) -> str:
