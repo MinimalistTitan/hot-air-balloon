@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from app.modules.assistant.application.commands import AssistantQueryCommand
@@ -15,10 +15,18 @@ from app.modules.assistant.application.ports import (
     ToolRuntimePort,
     UserMemoryErasePort,
 )
+from app.modules.assistant.application.reference_resolution.field_query import FieldQueryExecutor
+from app.modules.assistant.application.reference_resolution.formatting import (
+    FieldValueFormatterRegistry,
+)
+from app.modules.assistant.application.reference_resolution.resolver import (
+    ReferenceResolver,
+)
 from app.modules.assistant.contracts.messages import (
     AssistantQueryResponseV1,
     AssistantToolCallTraceV1,
 )
+from app.modules.assistant.domain.conversation_evidence import ConversationEvidenceSnapshot
 from app.modules.assistant.domain.entities import ToolCallRecord
 from app.modules.assistant.domain.errors import AssistantOrchestrationFailedError
 from app.modules.assistant.domain.tool_call import ToolCallPolicy
@@ -33,6 +41,10 @@ class OrchestrateAssistantQuery:
     telemetry: AssistantTelemetryPort
     tool_policy: ToolCallPolicy
     context_assembler: ContextAssemblerPort
+    evidence_retention_days: int = 90
+    reference_resolver: ReferenceResolver | None = None
+    field_query_executor: FieldQueryExecutor | None = None
+    field_value_formatters: FieldValueFormatterRegistry | None = None
 
     async def execute(self, command: AssistantQueryCommand) -> AssistantQueryResponseV1:
         self.telemetry.query_started(command.query)
@@ -44,17 +56,64 @@ class OrchestrateAssistantQuery:
             owner_user_id=owner_user_id,
             observed_at_utc=user_turn_created_at,
         )
+
         history = await self.conversation_store.read_recent(
             conversation_id,
             owner_user_id=owner_user_id,
             limit=12,
         )
+
+        recent_evidence = await self.conversation_store.read_recent_evidence(
+            conversation_id,
+            owner_user_id=owner_user_id,
+            limit=12,
+        )
+
+        resolution = (
+            self.reference_resolver.resolve(command.query, recent_evidence)
+            if self.reference_resolver is not None
+            else None
+        )
+
+        if (
+            resolution is not None
+            and resolution.reference is not None
+            and self.field_query_executor is not None
+            and self.field_value_formatters is not None
+        ):
+            field_result = self.field_query_executor.execute(resolution.reference)
+            answer = self.field_value_formatters.format(field_result)
+
+            await self.conversation_store.append_completed_exchange(
+                conversation_id=conversation_id,
+                owner_user_id=owner_user_id,
+                user_turn=ConversationTurn(
+                    role="user",
+                    content=command.query,
+                    created_at_utc=user_turn_created_at,
+                ),
+                assistant_turn=ConversationTurn(
+                    role="assistant",
+                    content=answer,
+                    created_at_utc=datetime.now(UTC),
+                ),
+            )
+            self.telemetry.query_completed(0)
+            return AssistantQueryResponseV1(
+                answer=answer,
+                conversation_id=conversation_id,
+                agent_name="assistant.reference-resolver",
+                model_name="deterministic",
+                finish_reason="completed",
+                tool_calls=[],
+            )
         context = await self.context_assembler.assemble(
             ContextRequest(
                 conversation_id=conversation_id,
                 user_query=command.query,
                 authorization_context=command.authorization_context,
                 recent_turns=history,
+                recent_evidence=recent_evidence,
             )
         )
 
@@ -87,6 +146,20 @@ class OrchestrateAssistantQuery:
                 role="assistant",
                 content=run.answer,
                 created_at_utc=datetime.now(UTC),
+            ),
+            evidence=(
+                ConversationEvidenceSnapshot(
+                    conversation_id=conversation_id,
+                    owner_user_id=owner_user_id,
+                    exchange_id=uuid4(),
+                    tool_name="assistant.run",
+                    evidence=run.evidence,
+                    created_at_utc=user_turn_created_at,
+                    expires_at_utc=user_turn_created_at
+                    + timedelta(days=self.evidence_retention_days),
+                )
+                if run.evidence
+                else None
             ),
         )
 

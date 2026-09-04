@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, select, update
+from sqlalchemy import case, delete, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,9 +14,11 @@ from app.modules.assistant.application.ports import (
     ConversationTurn,
     MemoryWriterPort,
 )
+from app.modules.assistant.domain.conversation_evidence import ConversationEvidenceSnapshot
 from app.modules.assistant.domain.errors import ConversationOwnershipError
 from app.modules.assistant.infrastructure.conversation_memory.models import (
     AssistantConversationRecord,
+    ConversationEvidenceRecord,
     ConversationTurnRecord,
 )
 
@@ -108,7 +110,26 @@ class ConversationStore(ConversationStorePort, MemoryWriterPort):
         owner_user_id: UUID,
         user_turn: ConversationTurn,
         assistant_turn: ConversationTurn,
+        evidence: ConversationEvidenceSnapshot | None = None,
     ) -> None:
+        """Append a completed exchange consisting of a user turn and an assistant turn to the conversation memory.
+
+        This method ensures that the user turn and assistant turn are correctly ordered and belong to the same conversation.
+        It also optionally stores any associated evidence snapshot.
+
+        Note:
+            The user turn must have the role "user" and the assistant turn must have the role "assistant".
+
+        Args:
+            conversation_id (UUID): The unique identifier of the conversation.
+            owner_user_id (UUID): The unique identifier of the owner user.
+            user_turn (ConversationTurn): The conversation turn from the user.
+            assistant_turn (ConversationTurn): The conversation turn from the assistant.
+            evidence (ConversationEvidenceSnapshot | None, optional): An optional evidence snapshot associated with the exchange. Defaults to None.
+
+        Raises:
+            ValueError: If the roles of the user turn and assistant turn are not "user" and "assistant" respectively.
+        """
         if user_turn.role != "user" or assistant_turn.role != "assistant":
             raise ValueError("A completed exchange requires one user and one assistant turn")
 
@@ -125,6 +146,8 @@ class ConversationStore(ConversationStorePort, MemoryWriterPort):
                     self._turn_record(conversation_id, owner_user_id, assistant_turn),
                 )
             )
+            if evidence is not None:
+                session.add(self._evidence_record(evidence))
             await self._advance_conversation(
                 session,
                 conversation_id=conversation_id,
@@ -132,6 +155,69 @@ class ConversationStore(ConversationStorePort, MemoryWriterPort):
                 touched_at=assistant_turn.created_at_utc,
                 turn_count_increment=2,
             )
+
+    async def read_recent_evidence(
+        self,
+        conversation_id: UUID,
+        owner_user_id: UUID,
+        limit: int = 12,
+    ) -> list[ConversationEvidenceSnapshot]:
+        async with self.session_factory() as session:
+            await self._require_owner(
+                session,
+                conversation_id=conversation_id,
+                owner_user_id=owner_user_id,
+            )
+            if limit <= 0:
+                return []
+            statement = (
+                select(ConversationEvidenceRecord)
+                .where(
+                    ConversationEvidenceRecord.conversation_id == conversation_id,
+                    ConversationEvidenceRecord.owner_user_id == owner_user_id,
+                    (ConversationEvidenceRecord.expires_at.is_(None))
+                    | (ConversationEvidenceRecord.expires_at > datetime.now(UTC)),
+                )
+                .order_by(
+                    ConversationEvidenceRecord.created_at.desc(),
+                    ConversationEvidenceRecord.id.desc(),
+                )
+                .limit(limit)
+            )
+            records = list((await session.scalars(statement)).all())
+        return [
+            ConversationEvidenceSnapshot.from_json(
+                conversation_id=record.conversation_id,
+                owner_user_id=record.owner_user_id,
+                created_at_utc=record.created_at,
+                expires_at_utc=record.expires_at,
+                payload=record.evidence_json,
+            )
+            for record in reversed(records)
+        ]
+
+    async def append_evidence(self, snapshot: ConversationEvidenceSnapshot) -> None:
+        async with self.session_factory() as session, session.begin():
+            await self._require_owner(
+                session,
+                conversation_id=snapshot.conversation_id,
+                owner_user_id=snapshot.owner_user_id,
+            )
+            session.add(self._evidence_record(snapshot))
+
+    async def erase_evidence(self, conversation_id: UUID, owner_user_id: UUID) -> int:
+        async with self.session_factory() as session, session.begin():
+            await self._require_owner(
+                session,
+                conversation_id=conversation_id,
+                owner_user_id=owner_user_id,
+            )
+            statement = delete(ConversationEvidenceRecord).where(
+                ConversationEvidenceRecord.conversation_id == conversation_id,
+                ConversationEvidenceRecord.owner_user_id == owner_user_id,
+            )
+            result = await session.execute(statement)
+            return int(getattr(result, "rowcount", 0))
 
     async def record_turn(
         self,
@@ -264,4 +350,21 @@ class ConversationStore(ConversationStorePort, MemoryWriterPort):
             content=turn.content,
             created_at=turn.created_at_utc,
             expires_at=turn.created_at_utc + timedelta(days=self.retention_days),
+        )
+
+    def _evidence_record(
+        self,
+        snapshot: ConversationEvidenceSnapshot,
+    ) -> ConversationEvidenceRecord:
+        payload = snapshot.to_json()
+        return ConversationEvidenceRecord(
+            id=uuid4(),
+            conversation_id=snapshot.conversation_id,
+            owner_user_id=snapshot.owner_user_id,
+            exchange_id=snapshot.exchange_id,
+            tool_name=snapshot.tool_name,
+            schema_version=snapshot.schema_version,
+            evidence_json=payload,
+            created_at=snapshot.created_at_utc,
+            expires_at=snapshot.expires_at_utc,
         )

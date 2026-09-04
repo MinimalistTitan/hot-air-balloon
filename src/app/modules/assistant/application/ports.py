@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from app.modules.assistant.domain.context import AssembledContext
+from app.modules.assistant.domain.conversation_evidence import ConversationEvidenceSnapshot
 from app.modules.assistant.domain.entities import (
     AgentRunResult,
     AssistantDecisionEvent,
@@ -192,4 +193,38 @@ class ConversationStorePort(Protocol):
         owner_user_id: UUID,
         user_turn: ConversationTurn,
         assistant_turn: ConversationTurn,
+        evidence: ConversationEvidenceSnapshot | None = None,
     ) -> None: ...
+
+    async def read_recent_evidence(
+        self,
+        conversation_id: UUID,
+        owner_user_id: UUID,
+        limit: int = 12,
+    ) -> list[ConversationEvidenceSnapshot]: ...
+
+    async def erase_evidence(
+        self,
+        conversation_id: UUID,
+        owner_user_id: UUID,
+    ) -> int: ...
+
+
+class ConversationEvidenceStorePort(Protocol):
+    async def append_evidence(
+        self,
+        snapshot: ConversationEvidenceSnapshot,
+    ) -> None: ...
+
+    async def read_recent_evidence(
+        self,
+        conversation_id: UUID,
+        owner_user_id: UUID,
+        limit: int = 12,
+    ) -> list[ConversationEvidenceSnapshot]: ...
+
+    async def erase_evidence(
+        self,
+        conversation_id: UUID,
+        owner_user_id: UUID,
+    ) -> int: ...

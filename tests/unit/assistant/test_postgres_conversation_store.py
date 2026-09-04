@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.database.database import Base, create_session_factory
 from app.modules.assistant.application.ports import ConversationTurn
+from app.modules.assistant.domain.conversation_evidence import ConversationEvidenceSnapshot
 from app.modules.assistant.domain.errors import ConversationOwnershipError
 from app.modules.assistant.infrastructure.conversation_memory.models import (
     AssistantConversationRecord,
+    ConversationEvidenceRecord,
     ConversationTurnRecord,
 )
 from app.modules.assistant.infrastructure.conversation_memory.short_term.postgres_conversation_store import (
@@ -160,5 +162,46 @@ async def test_store_appends_completed_exchange_atomically() -> None:
             )
         ).one()
     assert conversation == (owner_user_id, 2)
+
+    await engine.dispose()
+
+
+async def test_store_persists_and_reads_owner_scoped_evidence() -> None:
+    engine = create_async_engine("sqlite+aiosqlite://")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    store = ConversationStore(session_factory=create_session_factory(engine))
+    conversation_id = uuid4()
+    owner_user_id = uuid4()
+    created_at = datetime.now(UTC)
+    await store.claim_or_validate(conversation_id, owner_user_id, created_at)
+    snapshot = ConversationEvidenceSnapshot(
+        conversation_id=conversation_id,
+        owner_user_id=owner_user_id,
+        exchange_id=uuid4(),
+        tool_name="get_work_orders",
+        evidence=(),
+        created_at_utc=created_at,
+        expires_at_utc=created_at + timedelta(days=90),
+    )
+
+    await store.append_completed_exchange(
+        conversation_id=conversation_id,
+        owner_user_id=owner_user_id,
+        user_turn=ConversationTurn("user", "Question", created_at),
+        assistant_turn=ConversationTurn("assistant", "Answer", created_at),
+        evidence=snapshot,
+    )
+
+    assert await store.read_recent_evidence(conversation_id, owner_user_id) == [snapshot]
+    with pytest.raises(ConversationOwnershipError):
+        await store.read_recent_evidence(conversation_id, uuid4())
+    async with engine.begin() as connection:
+        assert await connection.scalar(
+            select(ConversationEvidenceRecord.id).where(
+                ConversationEvidenceRecord.exchange_id == snapshot.exchange_id
+            )
+        ) is not None
 
     await engine.dispose()

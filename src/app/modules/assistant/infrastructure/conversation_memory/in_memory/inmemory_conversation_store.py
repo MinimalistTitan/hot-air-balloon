@@ -5,17 +5,26 @@ from datetime import datetime
 from uuid import UUID
 
 from app.modules.assistant.application.ports import (
+    ConversationEvidenceStorePort,
     ConversationStorePort,
     ConversationTurn,
     MemoryWriterPort,
 )
+from app.modules.assistant.domain.conversation_evidence import ConversationEvidenceSnapshot
 from app.modules.assistant.domain.errors import ConversationOwnershipError
 
 
 @dataclass(slots=True)
-class InMemoryConversationStore(ConversationStorePort, MemoryWriterPort):
+class InMemoryConversationStore(
+    ConversationStorePort,
+    ConversationEvidenceStorePort,
+    MemoryWriterPort,
+):
     max_turns_per_conversation: int = 5
     _state: dict[UUID, list[ConversationTurn]] = field(default_factory=lambda: defaultdict(list))
+    _evidence: dict[UUID, list[ConversationEvidenceSnapshot]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
     _owners: dict[UUID, UUID] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -58,6 +67,7 @@ class InMemoryConversationStore(ConversationStorePort, MemoryWriterPort):
         owner_user_id: UUID,
         user_turn: ConversationTurn,
         assistant_turn: ConversationTurn,
+        evidence: ConversationEvidenceSnapshot | None = None,
     ) -> None:
         if user_turn.role != "user" or assistant_turn.role != "assistant":
             raise ValueError("A completed exchange requires one user and one assistant turn")
@@ -66,6 +76,32 @@ class InMemoryConversationStore(ConversationStorePort, MemoryWriterPort):
             self._claim_or_validate(conversation_id, owner_user_id)
             self._state[conversation_id].extend((user_turn, assistant_turn))
             self._trim(conversation_id)
+            if evidence is not None:
+                self._evidence[conversation_id].append(evidence)
+
+    async def read_recent_evidence(
+        self,
+        conversation_id: UUID,
+        owner_user_id: UUID,
+        limit: int = 12,
+    ) -> list[ConversationEvidenceSnapshot]:
+        async with self._lock:
+            self._require_owner(conversation_id, owner_user_id)
+            if limit <= 0:
+                return []
+            return list(self._evidence[conversation_id][-limit:])
+
+    async def append_evidence(self, snapshot: ConversationEvidenceSnapshot) -> None:
+        async with self._lock:
+            self._require_owner(snapshot.conversation_id, snapshot.owner_user_id)
+            self._evidence[snapshot.conversation_id].append(snapshot)
+
+    async def erase_evidence(self, conversation_id: UUID, owner_user_id: UUID) -> int:
+        async with self._lock:
+            self._require_owner(conversation_id, owner_user_id)
+            deleted = len(self._evidence[conversation_id])
+            self._evidence[conversation_id].clear()
+            return deleted
 
     async def record_turn(
         self,

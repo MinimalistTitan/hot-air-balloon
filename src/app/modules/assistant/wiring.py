@@ -22,6 +22,10 @@ from app.modules.assistant.application.ports import (
     ToolRuntimePort,
     UserMemoryErasePort,
 )
+from app.modules.assistant.application.reference_resolution.field_query import FieldQueryExecutor
+from app.modules.assistant.application.reference_resolution.policy import (
+    build_default_reference_resolution_policy,
+)
 from app.modules.assistant.application.use_cases import (
     EraseUserMemory,
     OrchestrateAssistantQuery,
@@ -238,6 +242,8 @@ def build_assistant_module(
             ),
         )
 
+    reference_resolution_policy = build_default_reference_resolution_policy()
+
     return AssistantModule(
         query=OrchestrateAssistantQuery(
             tool_runtime=effective_tool_runtime,
@@ -246,6 +252,10 @@ def build_assistant_module(
             telemetry=effective_telemetry,
             tool_policy=effective_policy,
             context_assembler=effective_context_assembler,
+            evidence_retention_days=settings.short_term_retention_days,
+            reference_resolver=reference_resolution_policy.build_resolver(),
+            field_query_executor=FieldQueryExecutor(),
+            field_value_formatters=reference_resolution_policy.build_formatter_registry(),
         ),
         erase_user_memory=(
             EraseUserMemory(effective_user_memory_eraser)

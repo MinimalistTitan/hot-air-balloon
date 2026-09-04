@@ -6,6 +6,7 @@ from uuid import UUID
 
 from app.modules.assistant.application.ports import ConversationTurn
 from app.modules.assistant.domain.context import ContextBlock
+from app.modules.assistant.domain.conversation_evidence import ConversationEvidenceSnapshot
 from app.modules.user.domain.authorization import AuthorizationContext
 
 
@@ -15,6 +16,7 @@ class ContextRequest:
     user_query: str
     authorization_context: AuthorizationContext
     recent_turns: list[ConversationTurn] = field(default_factory=list)
+    recent_evidence: list[ConversationEvidenceSnapshot] = field(default_factory=list)
 
 
 class ContextProviderPort(Protocol):
